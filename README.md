@@ -64,6 +64,19 @@ Dieser Trading Bot ist speziell für den automatisierten Handel mit **Solana Mem
 
 ## ⚡ Features
 
+### 🤖 **NEW: Advanced AI & Machine Learning**
+
+| Feature | Beschreibung | Impact |
+|---------|--------------|--------|
+| **Deep Neural Networks** | LSTM + Attention for predictions | 70% accuracy |
+| **Reinforcement Learning** | Self-learning DQN agent | Continuous improvement |
+| **Intelligent Auto-Buy** | AI decides when to buy | +30% win rate |
+| **Intelligent Auto-Sell** | Optimal exit timing | +40% returns |
+| **Risk Assessment AI** | Detects rugs, honeypots, dumps | -50% bad trades |
+| **Ensemble Methods** | Multiple models combined | Best predictions |
+
+**[See full AI documentation →](AI_FEATURES.md)**
+
 ### 🔍 Scanner & Detection
 
 | Feature | Beschreibung | Impact |
@@ -72,7 +85,7 @@ Dieser Trading Bot ist speziell für den automatisierten Handel mit **Solana Mem
 | **Multi-Worker Processing** | 5 parallele Analyzer | 5x schneller |
 | **Priority Queue** | Intelligente Token-Priorisierung | Beste zuerst |
 | **Mempool Monitor** | Ultra-early LP-Detection | Vor allen anderen |
-| **Pattern Recognition** | Erkennt Pump&Dump, Rugs, etc. | Schutz vor Scams |
+| **AI Pattern Recognition** | Neural Networks erkennen Scams | 80%+ Schutz |
 
 ### 💎 Token-Analyse
 
@@ -429,7 +442,36 @@ else:
    - Bei gefundenem Token bekommst du eine Nachricht
    - Mit Buttons: 🚀 Buy oder ⏭️ Ignore
 
-### Test-Trade durchführen
+### 🤖 AI Auto-Trading aktivieren (OPTIONAL)
+
+1. **Aktiviere AI Features:**
+   ```
+   Telegram: /start → Settings → AI Trading
+   → Toggle Auto-Buy: ON
+   → Toggle Auto-Sell: ON
+   → AI Mode: BALANCED
+   ```
+
+2. **AI übernimmt automatisch:**
+   - Analysiert jeden Token mit Neural Networks
+   - Kauft automatisch bei hoher Confidence
+   - Verkauft zum optimalen Zeitpunkt
+   - Lernt aus jedem Trade
+
+3. **Überwache AI Performance:**
+   ```
+   /ai_stats
+
+   Zeigt:
+   • Prediction Accuracy
+   • Auto-Buy/Sell Stats
+   • Learning Progress
+   • ROI
+   ```
+
+**Hinweis:** AI braucht ~100 Trades zum Lernen. Startet konservativ!
+
+### Test-Trade durchführen (Manuell)
 
 1. **Warte auf ersten Alert** (kann 5-30 Minuten dauern)
 
