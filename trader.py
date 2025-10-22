@@ -6,12 +6,19 @@ import asyncio
 import aiohttp
 import time
 import numpy as np
+import os
+import base58
+import base64
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from decimal import Decimal
 import heapq
 from collections import defaultdict
 import statistics
+from solders.keypair import Keypair
+from solders.transaction import VersionedTransaction
+from solana.rpc.async_api import AsyncClient
+from solana.rpc.commitment import Confirmed
 
 # Circuit Breaker Implementation
 class CircuitBreaker:
@@ -539,7 +546,16 @@ class JupiterDEX:
         return {}
 
     async def execute_swap(self, quote: Dict, keypair) -> str:
-        """Execute swap on Jupiter"""
+        """
+        Execute swap on Jupiter with transaction signing and sending
+
+        Args:
+            quote: Quote dictionary containing quote_response
+            keypair: Solana keypair for signing
+
+        Returns:
+            Transaction signature on success, empty string on failure
+        """
         try:
             session = await self._get_session()
             # Jupiter swap API endpoint
@@ -548,16 +564,64 @@ class JupiterDEX:
             swap_payload = {
                 'quoteResponse': quote.get('quote_response', {}),
                 'userPublicKey': str(keypair.pubkey()),
-                'wrapUnwrapSOL': True
+                'wrapUnwrapSOL': True,
+                'dynamicComputeUnitLimit': True,  # Auto compute units
+                'prioritizationFeeLamports': 'auto'  # Auto priority fee
             }
 
+            # Get swap transaction from Jupiter
             async with session.post(swap_url, json=swap_payload, ssl=False) as response:
-                if response.status == 200:
-                    swap_data = await response.json()
-                    # Return the swap transaction (would need to sign and send)
-                    return swap_data.get('swapTransaction', '')
+                if response.status != 200:
+                    error_text = await response.text()
+                    print(f"❌ Jupiter swap API error ({response.status}): {error_text}")
+                    return ""
+
+                swap_data = await response.json()
+                swap_tx_base64 = swap_data.get('swapTransaction')
+
+                if not swap_tx_base64:
+                    print(f"❌ No swap transaction returned from Jupiter")
+                    return ""
+
+            # Decode the transaction
+            tx_bytes = base64.b64decode(swap_tx_base64)
+            tx = VersionedTransaction.from_bytes(tx_bytes)
+
+            # Sign the transaction
+            tx.sign([keypair])
+
+            print(f"✅ Transaction signed, sending to Solana...")
+
+            # Get RPC URL from environment or use default
+            rpc_url = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")
+
+            # Send the signed transaction
+            client = AsyncClient(rpc_url)
+
+            try:
+                # Send with confirmed commitment
+                result = await client.send_transaction(
+                    tx,
+                    opts={'skip_preflight': False, 'preflight_commitment': Confirmed}
+                )
+
+                signature = str(result.value)
+                print(f"✅ Transaction sent: {signature}")
+
+                # Wait for confirmation (optional, can be done asynchronously)
+                # await client.confirm_transaction(signature, commitment=Confirmed)
+                # print(f"✅ Transaction confirmed: {signature}")
+
+                return signature
+
+            finally:
+                await client.close()
+
         except Exception as e:
-            print(f"Jupiter swap error: {e}")
+            print(f"❌ Jupiter swap execution error: {e}")
+            import traceback
+            traceback.print_exc()
+
         return ""
 
     async def close(self):
@@ -808,11 +872,37 @@ class Trader:
         self.winning_trades: int = 0
         self.is_initialized = False
 
-    async def initialize(self, keypair):
-        """Initialize trader with keypair"""
-        self.keypair = keypair
+    async def initialize(self, keypair=None):
+        """
+        Initialize trader with keypair
+        If keypair is None, loads from PRIVATE_KEY environment variable
+        """
+        if keypair is None:
+            # Load private key from environment
+            private_key = os.getenv("PRIVATE_KEY")
+            if not private_key:
+                raise ValueError("❌ PRIVATE_KEY not found in environment variables!")
+
+            try:
+                # Try Base58 decode (Phantom Wallet format)
+                private_key_bytes = base58.b58decode(private_key)
+                self.keypair = Keypair.from_bytes(private_key_bytes)
+                print(f"✅ Loaded wallet from Base58 private key")
+            except Exception as e1:
+                try:
+                    # Try JSON array format [1,2,3,...]
+                    import json
+                    key_array = json.loads(private_key)
+                    self.keypair = Keypair.from_bytes(bytes(key_array))
+                    print(f"✅ Loaded wallet from JSON array private key")
+                except Exception as e2:
+                    raise ValueError(f"❌ Failed to decode PRIVATE_KEY. Try Base58 or JSON array format.\nBase58 error: {e1}\nJSON error: {e2}")
+        else:
+            self.keypair = keypair
+
         self.is_initialized = True
-        print(f"✅ Trader initialized for wallet: {str(keypair.pubkey())[:8]}...")
+        wallet_address = str(self.keypair.pubkey())
+        print(f"✅ Trader initialized for wallet: {wallet_address[:8]}...{wallet_address[-8:]}")
 
     async def open_position(self, token_metrics, amount_sol: float) -> Optional[Position]:
         """

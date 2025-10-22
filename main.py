@@ -71,9 +71,14 @@ class TradingBot:
             logger.error(f"❌ Telegram Bot Fehler: {e}")
             raise
             
-        # Warte auf Trader & Analyzer Initialisierung
+        # Initialisiere Trader mit Wallet aus Environment
         logger.info("🔄 Initialisiere Trading Module...")
-        await asyncio.sleep(2)  # Gibt Zeit für Async Initialization
+        try:
+            await trader.initialize()  # Loads keypair from PRIVATE_KEY env var
+            logger.info("✅ Trader initialisiert")
+        except Exception as e:
+            logger.error(f"❌ Trader Initialisierung fehlgeschlagen: {e}")
+            raise
         
         # Sende Start-Nachricht
         await telegram_bot.send_message(
