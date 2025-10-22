@@ -501,4 +501,82 @@ class PatternDetector:
         # Very new + high volume + high volatility
         if (metrics.age_minutes < 10 and
             metrics.volume_usd_5m > metrics.liquidity_usd * 0.5 and
-            metrics.volatility > 0.3)
+            metrics.volatility > 0.3):
+            # Additional check: high price change but low holder growth
+            if metrics.price_change_5m > 50 and metrics.holder_count < 100:
+                return True
+        return False
+
+    async def _detect_organic_growth(self, metrics: EnhancedTokenMetrics, pair_data: Dict) -> bool:
+        """Erkennt organisches Wachstum"""
+        # Steady growth + good holder distribution + consistent volume
+        if (metrics.age_minutes > 15 and
+            metrics.holder_count > 200 and
+            metrics.top_10_percentage < 50 and
+            metrics.volume_usd_5m > metrics.liquidity_usd * 0.1 and
+            metrics.price_change_5m > 10 and metrics.price_change_5m < 100):
+            return True
+        return False
+
+    async def _detect_whale_accumulation(self, metrics: EnhancedTokenMetrics, pair_data: Dict) -> bool:
+        """Erkennt Whale Akkumulation"""
+        # Large pending buys + low volatility + stable price
+        if (metrics.pending_large_buys > 3 and
+            metrics.pending_large_sells < 2 and
+            metrics.whale_activity_detected and
+            metrics.volatility < 0.2):
+            return True
+        return False
+
+    async def _detect_breakout(self, metrics: EnhancedTokenMetrics, pair_data: Dict) -> bool:
+        """Erkennt Breakout Pattern"""
+        # High volume spike + strong price change + momentum
+        if (metrics.volume_usd_5m > metrics.liquidity_usd * 0.3 and
+            metrics.price_change_5m > 30 and
+            metrics.momentum_score > 0.7 and
+            metrics.buy_pressure > 0.6):
+            return True
+        return False
+
+    async def _detect_rug_pattern(self, metrics: EnhancedTokenMetrics, pair_data: Dict) -> bool:
+        """Erkennt potenzielle Rug Pull Pattern"""
+        # Very high top holder concentration + suspicious deployer + low liquidity
+        if (metrics.top_10_percentage > 80 and
+            not metrics.deployer_trusted and
+            not metrics.lp_burned and
+            metrics.liquidity_usd < 5000):
+            return True
+
+        # Additional: sudden large sells pending
+        if metrics.pending_large_sells > 5 and metrics.age_minutes < 30:
+            return True
+
+        return False
+
+    async def _detect_fomo_wave(self, metrics: EnhancedTokenMetrics, pair_data: Dict) -> bool:
+        """Erkennt FOMO Wave Pattern"""
+        # Very high transaction count + rapid holder growth + social buzz
+        if (metrics.tx_count_5m > 100 and
+            metrics.volume_usd_5m > metrics.liquidity_usd * 0.4 and
+            metrics.price_change_5m > 50 and
+            metrics.social_sentiment > 0.7):
+            return True
+        return False
+
+class SocialSentimentAnalyzer:
+    """Analysiert Social Media Sentiment für Tokens"""
+
+    def __init__(self):
+        self.cache = {}
+
+    async def analyze(self, token_address: str, symbol: str) -> float:
+        """
+        Analysiert Social Sentiment
+        Returns: Score 0-1 (0=sehr negativ, 0.5=neutral, 1=sehr positiv)
+        """
+        # Placeholder - würde Twitter API, Discord, Telegram Gruppen etc. analysieren
+        # Für jetzt: Neutral score
+        return 0.5
+
+# Global instance
+analyzer = EnhancedAnalyzer()

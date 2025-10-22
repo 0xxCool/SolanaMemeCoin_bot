@@ -11,6 +11,7 @@ import logging
 from dotenv import load_dotenv
 from typing import Optional
 import time
+from telegram import Update
 
 import telegram_bot
 from scanner import scanner

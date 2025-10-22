@@ -497,59 +497,233 @@ class SlippagePredictor:
 # DEX Implementations
 class JupiterDEX:
     """Jupiter DEX Integration"""
-    
-    async def get_quote(self, input_mint: str, output_mint: str, 
+
+    def __init__(self):
+        self.api_url = "https://quote-api.jup.ag/v6"
+        self.session: Optional[aiohttp.ClientSession] = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session"""
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10)
+            )
+        return self.session
+
+    async def get_quote(self, input_mint: str, output_mint: str,
                        amount: int, slippage_bps: int) -> Dict:
         """Get quote from Jupiter"""
-        # Implementation
+        try:
+            session = await self._get_session()
+            url = f"{self.api_url}/quote"
+            params = {
+                'inputMint': input_mint,
+                'outputMint': output_mint,
+                'amount': amount,
+                'slippageBps': slippage_bps
+            }
+
+            async with session.get(url, params=params, ssl=False) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {
+                        'dex': 'jupiter',
+                        'input_amount': amount,
+                        'output_amount': int(data.get('outAmount', 0)),
+                        'price_impact': float(data.get('priceImpactPct', 0)),
+                        'route': data.get('routePlan', []),
+                        'quote_response': data
+                    }
+        except Exception as e:
+            print(f"Jupiter quote error: {e}")
         return {}
-        
+
     async def execute_swap(self, quote: Dict, keypair) -> str:
         """Execute swap on Jupiter"""
-        # Implementation
+        try:
+            session = await self._get_session()
+            # Jupiter swap API endpoint
+            swap_url = f"{self.api_url}/swap"
+
+            swap_payload = {
+                'quoteResponse': quote.get('quote_response', {}),
+                'userPublicKey': str(keypair.pubkey()),
+                'wrapUnwrapSOL': True
+            }
+
+            async with session.post(swap_url, json=swap_payload, ssl=False) as response:
+                if response.status == 200:
+                    swap_data = await response.json()
+                    # Return the swap transaction (would need to sign and send)
+                    return swap_data.get('swapTransaction', '')
+        except Exception as e:
+            print(f"Jupiter swap error: {e}")
         return ""
+
+    async def close(self):
+        """Close session"""
+        if self.session and not self.session.closed:
+            await self.session.close()
 
 class RaydiumDEX:
     """Raydium DEX Integration"""
-    
+
+    def __init__(self):
+        self.api_url = "https://api.raydium.io/v2"
+        self.session: Optional[aiohttp.ClientSession] = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session"""
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10)
+            )
+        return self.session
+
     async def get_quote(self, input_mint: str, output_mint: str,
                        amount: int, slippage_bps: int) -> Dict:
         """Get quote from Raydium"""
-        # Implementation
+        try:
+            session = await self._get_session()
+            url = f"{self.api_url}/swap/quote"
+            params = {
+                'inputMint': input_mint,
+                'outputMint': output_mint,
+                'amount': amount,
+                'slippage': slippage_bps / 10000  # Convert bps to decimal
+            }
+
+            async with session.get(url, params=params, ssl=False) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {
+                        'dex': 'raydium',
+                        'input_amount': amount,
+                        'output_amount': int(data.get('outputAmount', 0)),
+                        'price_impact': float(data.get('priceImpact', 0)),
+                        'route': [data.get('poolId', '')],
+                        'quote_response': data
+                    }
+        except Exception as e:
+            print(f"Raydium quote error: {e}")
         return {}
-        
+
     async def execute_swap(self, quote: Dict, keypair) -> str:
         """Execute swap on Raydium"""
-        # Implementation
+        try:
+            # Raydium requires direct transaction building
+            # This is a simplified placeholder
+            print("Raydium swap would be executed here")
+            return ""
+        except Exception as e:
+            print(f"Raydium swap error: {e}")
         return ""
+
+    async def close(self):
+        """Close session"""
+        if self.session and not self.session.closed:
+            await self.session.close()
 
 class OrcaDEX:
     """Orca DEX Integration"""
-    
+
+    def __init__(self):
+        self.api_url = "https://api.orca.so"
+        self.session: Optional[aiohttp.ClientSession] = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session"""
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10)
+            )
+        return self.session
+
     async def get_quote(self, input_mint: str, output_mint: str,
                        amount: int, slippage_bps: int) -> Dict:
         """Get quote from Orca"""
-        # Implementation
+        try:
+            session = await self._get_session()
+            url = f"{self.api_url}/v1/quote"
+            params = {
+                'inputMint': input_mint,
+                'outputMint': output_mint,
+                'amount': amount,
+                'slippage': slippage_bps / 10000
+            }
+
+            async with session.get(url, params=params, ssl=False) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return {
+                        'dex': 'orca',
+                        'input_amount': amount,
+                        'output_amount': int(data.get('outAmount', 0)),
+                        'price_impact': float(data.get('priceImpact', 0)),
+                        'route': data.get('route', []),
+                        'quote_response': data
+                    }
+        except Exception as e:
+            print(f"Orca quote error: {e}")
         return {}
-        
+
     async def execute_swap(self, quote: Dict, keypair) -> str:
         """Execute swap on Orca"""
-        # Implementation
+        try:
+            # Orca swap execution would go here
+            print("Orca swap would be executed here")
+            return ""
+        except Exception as e:
+            print(f"Orca swap error: {e}")
         return ""
+
+    async def close(self):
+        """Close session"""
+        if self.session and not self.session.closed:
+            await self.session.close()
 
 class SerumDEX:
     """Serum DEX Integration"""
-    
+
+    def __init__(self):
+        # Serum is now mostly deprecated in favor of OpenBook
+        # But keeping for compatibility
+        self.session: Optional[aiohttp.ClientSession] = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session"""
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=10)
+            )
+        return self.session
+
     async def get_quote(self, input_mint: str, output_mint: str,
                        amount: int, slippage_bps: int) -> Dict:
-        """Get quote from Serum"""
-        # Implementation
+        """Get quote from Serum/OpenBook"""
+        try:
+            # Serum/OpenBook requires on-chain orderbook reads
+            # This is a simplified placeholder
+            print("Serum quote would require orderbook reads")
+            return {}
+        except Exception as e:
+            print(f"Serum quote error: {e}")
         return {}
-        
+
     async def execute_swap(self, quote: Dict, keypair) -> str:
         """Execute swap on Serum"""
-        # Implementation
+        try:
+            # Serum swap would build and send transaction
+            print("Serum swap would be executed here")
+            return ""
+        except Exception as e:
+            print(f"Serum swap error: {e}")
         return ""
+
+    async def close(self):
+        """Close session"""
+        if self.session and not self.session.closed:
+            await self.session.close()
 
 # Global Instances
 smart_router = SmartOrderRouter()
@@ -583,3 +757,243 @@ async def predict_optimal_slippage(token: str, amount_sol: float, liquidity: flo
 async def get_fastest_rpc() -> str:
     """Get current fastest RPC endpoint"""
     return await multi_rpc.get_fastest_rpc()
+
+# Position Management Classes
+@dataclass
+class Position:
+    """Represents an active trading position"""
+    token_address: str
+    symbol: str
+    entry_price: float
+    entry_time: float
+    amount_sol: float
+    amount_tokens: int
+    stop_loss: float = 0
+    take_profit: float = 0
+    current_price: float = 0
+    unrealized_pnl: float = 0
+    status: str = "OPEN"  # OPEN, CLOSED, STOPPED
+
+    def update_pnl(self, current_price: float):
+        """Updates unrealized PnL"""
+        self.current_price = current_price
+        price_change = (current_price - self.entry_price) / self.entry_price
+        self.unrealized_pnl = self.amount_sol * price_change
+
+    def should_stop_loss(self) -> bool:
+        """Check if stop loss should trigger"""
+        if self.stop_loss > 0 and self.current_price <= self.stop_loss:
+            return True
+        return False
+
+    def should_take_profit(self) -> bool:
+        """Check if take profit should trigger"""
+        if self.take_profit > 0 and self.current_price >= self.take_profit:
+            return True
+        return False
+
+class Trader:
+    """
+    Main Trader class for position management and trade execution
+    """
+
+    def __init__(self):
+        self.positions: Dict[str, Position] = {}
+        self.trade_history: List[Dict] = []
+        self.keypair = None
+        self.sol_balance: float = 0
+        self.total_pnl: float = 0
+        self.win_rate: float = 0
+        self.total_trades: int = 0
+        self.winning_trades: int = 0
+        self.is_initialized = False
+
+    async def initialize(self, keypair):
+        """Initialize trader with keypair"""
+        self.keypair = keypair
+        self.is_initialized = True
+        print(f"✅ Trader initialized for wallet: {str(keypair.pubkey())[:8]}...")
+
+    async def open_position(self, token_metrics, amount_sol: float) -> Optional[Position]:
+        """
+        Opens a new trading position
+
+        Args:
+            token_metrics: EnhancedTokenMetrics from analyzer
+            amount_sol: Amount in SOL to invest
+
+        Returns:
+            Position object if successful, None otherwise
+        """
+        try:
+            if not self.is_initialized:
+                print("❌ Trader not initialized")
+                return None
+
+            # Get quote for the trade
+            quote = await get_best_quote(
+                input_mint="So11111111111111111111111111111111111111112",  # SOL
+                output_mint=token_metrics.address,
+                amount_sol=amount_sol
+            )
+
+            if not quote or quote.get('output_amount', 0) == 0:
+                print(f"❌ No valid quote for {token_metrics.symbol}")
+                return None
+
+            # Calculate stop loss and take profit based on ML predictions
+            entry_price = quote.get('output_amount', 0) / (amount_sol * 1e9)
+            stop_loss_pct = 0.15  # -15% stop loss
+            take_profit_pct = token_metrics.ml_predicted_return / 100 if token_metrics.ml_predicted_return > 0 else 0.5
+
+            position = Position(
+                token_address=token_metrics.address,
+                symbol=token_metrics.symbol,
+                entry_price=entry_price,
+                entry_time=time.time(),
+                amount_sol=amount_sol,
+                amount_tokens=quote.get('output_amount', 0),
+                stop_loss=entry_price * (1 - stop_loss_pct),
+                take_profit=entry_price * (1 + take_profit_pct),
+                current_price=entry_price
+            )
+
+            # Execute the trade
+            tx_signature = await execute_smart_trade(quote, self.keypair)
+
+            if tx_signature:
+                self.positions[token_metrics.address] = position
+                print(f"✅ Opened position in {token_metrics.symbol}")
+                print(f"   Entry: ${entry_price:.8f}")
+                print(f"   Amount: {amount_sol} SOL")
+                print(f"   Stop Loss: ${position.stop_loss:.8f}")
+                print(f"   Take Profit: ${position.take_profit:.8f}")
+                return position
+            else:
+                print(f"❌ Trade execution failed for {token_metrics.symbol}")
+                return None
+
+        except Exception as e:
+            print(f"❌ Error opening position: {e}")
+            return None
+
+    async def close_position(self, token_address: str, reason: str = "MANUAL") -> bool:
+        """
+        Closes an existing position
+
+        Args:
+            token_address: Token address to close
+            reason: Reason for closing (MANUAL, STOP_LOSS, TAKE_PROFIT, TIMEOUT)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if token_address not in self.positions:
+                print(f"❌ No position found for {token_address}")
+                return False
+
+            position = self.positions[token_address]
+
+            # Get quote to sell
+            quote = await get_best_quote(
+                input_mint=token_address,
+                output_mint="So11111111111111111111111111111111111111112",  # SOL
+                amount_sol=position.amount_tokens / 1e9
+            )
+
+            if not quote:
+                print(f"❌ No quote available to close {position.symbol}")
+                return False
+
+            # Execute sell
+            tx_signature = await execute_smart_trade(quote, self.keypair)
+
+            if tx_signature:
+                # Calculate final PnL
+                exit_sol = quote.get('output_amount', 0) / 1e9
+                pnl = exit_sol - position.amount_sol
+                pnl_pct = (pnl / position.amount_sol) * 100
+
+                # Update stats
+                position.status = "CLOSED"
+                self.total_pnl += pnl
+                self.total_trades += 1
+                if pnl > 0:
+                    self.winning_trades += 1
+                self.win_rate = (self.winning_trades / self.total_trades) * 100 if self.total_trades > 0 else 0
+
+                # Record trade
+                self.trade_history.append({
+                    'symbol': position.symbol,
+                    'entry_price': position.entry_price,
+                    'exit_price': position.current_price,
+                    'entry_time': position.entry_time,
+                    'exit_time': time.time(),
+                    'hold_time': time.time() - position.entry_time,
+                    'amount_sol': position.amount_sol,
+                    'pnl': pnl,
+                    'pnl_pct': pnl_pct,
+                    'reason': reason
+                })
+
+                print(f"✅ Closed position in {position.symbol}")
+                print(f"   Reason: {reason}")
+                print(f"   PnL: {pnl:.4f} SOL ({pnl_pct:+.2f}%)")
+
+                # Remove from active positions
+                del self.positions[token_address]
+                return True
+            else:
+                print(f"❌ Failed to execute sell for {position.symbol}")
+                return False
+
+        except Exception as e:
+            print(f"❌ Error closing position: {e}")
+            return False
+
+    async def update_positions(self):
+        """Updates all active positions and checks for stop loss / take profit"""
+        for token_address, position in list(self.positions.items()):
+            try:
+                # Get current price (simplified - would query actual price)
+                # In real implementation, fetch from DexScreener or on-chain
+                current_price = position.current_price  # Placeholder
+
+                position.update_pnl(current_price)
+
+                # Check stop loss
+                if position.should_stop_loss():
+                    print(f"⚠️ Stop loss triggered for {position.symbol}")
+                    await self.close_position(token_address, "STOP_LOSS")
+
+                # Check take profit
+                elif position.should_take_profit():
+                    print(f"✅ Take profit triggered for {position.symbol}")
+                    await self.close_position(token_address, "TAKE_PROFIT")
+
+                # Check timeout (default 1 hour)
+                elif time.time() - position.entry_time > 3600:
+                    print(f"⏰ Position timeout for {position.symbol}")
+                    await self.close_position(token_address, "TIMEOUT")
+
+            except Exception as e:
+                print(f"Error updating position {position.symbol}: {e}")
+
+    def get_active_positions(self) -> List[Position]:
+        """Returns list of active positions"""
+        return list(self.positions.values())
+
+    def get_stats(self) -> Dict:
+        """Returns trading statistics"""
+        return {
+            'total_pnl': self.total_pnl,
+            'total_trades': self.total_trades,
+            'winning_trades': self.winning_trades,
+            'win_rate': self.win_rate,
+            'active_positions': len(self.positions),
+            'sol_balance': self.sol_balance
+        }
+
+# Global trader instance
+trader = Trader()
