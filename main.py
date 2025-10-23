@@ -18,6 +18,14 @@ from scanner import scanner
 from analyzer import analyzer
 from trader import trader
 
+# Import Integration Layer (AI + Auto-Trading)
+try:
+    from integration import initialize_integration, integration_manager
+    INTEGRATION_AVAILABLE = True
+except ImportError:
+    INTEGRATION_AVAILABLE = False
+    logger.warning("⚠️ Integration module not available - running without AI")
+
 # Logging Setup
 logging.basicConfig(
     level=logging.INFO,
@@ -79,16 +87,26 @@ class TradingBot:
         except Exception as e:
             logger.error(f"❌ Trader Initialisierung fehlgeschlagen: {e}")
             raise
-        
+
+        # Initialisiere Integration Layer (AI + Auto-Trading)
+        if INTEGRATION_AVAILABLE:
+            try:
+                await initialize_integration()
+                logger.info("✅ AI & Auto-Trading initialisiert")
+            except Exception as e:
+                logger.warning(f"⚠️ Integration initialization warning: {e}")
+
         # Sende Start-Nachricht
+        ai_status = "✅ Active" if INTEGRATION_AVAILABLE else "⚠️ Disabled"
         await telegram_bot.send_message(
             f"""
 *🚀 Bot Gestartet!*
 
-Version: 2.0 Enhanced
+Version: 2.0 Enhanced + AI
 Mode: High-Performance
 Scanner: WebSocket Streaming
 Trading: MEV Protected
+AI Engine: {ai_status}
 
 Verwende /start für das Hauptmenü.
             """,

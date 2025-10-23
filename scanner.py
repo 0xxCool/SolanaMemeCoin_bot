@@ -208,10 +208,17 @@ class HighPerformanceScanner:
                     timeout=1.0
                 )
                 
-                # Analysiere Pair
+                # Analysiere Pair (mit Integration Layer)
                 start_time = time.time()
-                await analyzer.analyze_streamed_pair(priority_pair.pair_data)
-                
+
+                # Try using integration layer first (includes AI & Auto-Trading)
+                try:
+                    from integration import process_token
+                    await process_token(priority_pair.pair_data)
+                except ImportError:
+                    # Fallback to traditional analyzer
+                    await analyzer.analyze_streamed_pair(priority_pair.pair_data)
+
                 process_time = time.time() - start_time
                 self.stats['processed'] += 1
                 
