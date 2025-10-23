@@ -59,3 +59,20 @@ Thumbs.db
 # Trading Bot Specific
 wallet_backup/
 trades_history.json
+
+# Windows Build Artifacts
+windows/dist/*
+!windows/dist/README.md
+windows/build/
+windows/*.spec.bak
+windows/*.exe
+windows/*.msi
+windows/venv/
+
+# Android Build Artifacts
+android/bin/
+android/dist/*
+!android/dist/README.md
+android/.buildozer/
+android/*.apk
+android/*.aab
