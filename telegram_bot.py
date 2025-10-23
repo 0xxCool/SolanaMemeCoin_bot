@@ -22,6 +22,7 @@ from telegram.constants import ParseMode
 
 # Import Bot Components
 import trader
+from scanner import scanner
 from config import (
     scanner_filters, trading_config, profit_strategy,
     scoring_weights, monitoring_config
@@ -128,7 +129,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 *Status:* {'🟢 ACTIVE' if scanner.running else '🔴 INACTIVE'}
 *Chat ID:* `{chat_id}`
 *Uptime:* {get_uptime()}
-*Positions:* {len(trader.trader.positions)}
+*Positions:* {len(trader.positions)}
 ━━━━━━━━━━━━━━━━━━━━━━━
 
 *🎯 Quick Stats:*
@@ -178,10 +179,10 @@ async def dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     total_invested = 0
     total_current_value = 0
 
-    for addr, pos in trader.trader.positions.items():
-        profit_pct = ((pos.last_price - pos.entry_price) / pos.entry_price) * 100 if pos.last_price else 0
-        total_invested += pos.invested_sol
-        total_current_value += pos.invested_sol * (1 + profit_pct/100)
+    for addr, pos in trader.positions.items():
+        profit_pct = ((pos.current_price - pos.entry_price) / pos.entry_price) * 100 if pos.current_price else 0
+        total_invested += pos.amount_sol
+        total_current_value += pos.amount_sol * (1 + profit_pct/100)
 
         emoji = "🟢" if profit_pct > 0 else "🔴"
         positions_text += f"{emoji} `{pos.symbol[:8]}` {profit_pct:+.1f}%\n"
@@ -205,7 +206,7 @@ async def dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 • Total P&L: {bot_stats['total_profit_sol']:+.4f} SOL
 • Best Trade: {get_best_trade():+.2f}%
 
-*💼 Active Positions ({len(trader.trader.positions)})*
+*💼 Active Positions ({len(trader.positions)})*
 {positions_text}
 
 *📊 Portfolio*

@@ -18,15 +18,7 @@ from scanner import scanner
 from analyzer import analyzer
 from trader import trader
 
-# Import Integration Layer (AI + Auto-Trading)
-try:
-    from integration import initialize_integration, integration_manager
-    INTEGRATION_AVAILABLE = True
-except ImportError:
-    INTEGRATION_AVAILABLE = False
-    logger.warning("⚠️ Integration module not available - running without AI")
-
-# Logging Setup
+# Logging Setup (MUST be before any logger usage!)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -36,6 +28,14 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Import Integration Layer (AI + Auto-Trading)
+try:
+    from integration import initialize_integration, integration_manager
+    INTEGRATION_AVAILABLE = True
+except ImportError:
+    INTEGRATION_AVAILABLE = False
+    logger.warning("⚠️ Integration module not available - running without AI")
 
 class TradingBot:
     def __init__(self):
