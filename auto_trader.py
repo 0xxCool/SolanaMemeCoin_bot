@@ -12,7 +12,7 @@ import logging
 # Import AI Engine
 from ai_engine import ai_engine, get_ai_recommendation, update_ai_with_trade_result
 import trader
-import telegram_bot_enhanced as tg_bot
+import telegram_bot as tg_bot
 from config import trading_config, profit_strategy
 
 logger = logging.getLogger(__name__)
@@ -178,7 +178,7 @@ class AutoTrader:
         """
         try:
             # Use trader module
-            position = await trader.trader.open_position(token_data, amount_sol)
+            position = await trader.open_position(token_data, amount_sol)
 
             if position:
                 # Record for AI learning
@@ -218,15 +218,15 @@ class AutoTrader:
         entry_time = time.time()
         highest_price = 0
 
-        while token_address in trader.trader.positions:
+        while token_address in trader.positions:
             try:
                 await asyncio.sleep(5)  # Check every 5 seconds
 
-                position = trader.trader.positions.get(token_address)
+                position = trader.positions.get(token_address)
                 if not position:
                     break
 
-                current_price = position.last_price
+                current_price = position.current_price
                 if not entry_price:
                     entry_price = position.entry_price
 
@@ -245,11 +245,11 @@ class AutoTrader:
 
                 if should_sell:
                     # Execute sell
-                    success = await trader.trader.close_position(token_address, reason)
+                    success = await trader.close_position(token_address, reason)
 
                     if success:
                         self.stats['auto_sells'] += 1
-                        self.stats['auto_profit_sol'] += position.invested_sol * (profit_pct / 100)
+                        self.stats['auto_profit_sol'] += position.amount_sol * (profit_pct / 100)
 
                         # Learn from trade
                         if self.settings.learning_enabled:

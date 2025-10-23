@@ -257,9 +257,9 @@ class HighPerformanceScanner:
             worker.cancel()
             
         await asyncio.gather(*self.workers, return_exceptions=True)
-        
+
         # Cleanup
-        await analyzer.analyzer.cleanup()
+        await analyzer.cleanup()
 
 # Globale Scanner Instanz
 scanner = HighPerformanceScanner()
