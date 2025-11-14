@@ -55,4 +55,4 @@ mypy==1.7.1
 # Security
 cryptography==41.0.7
 bandit==1.7.5
-safety==2.3.5
+safety==3.7.0
