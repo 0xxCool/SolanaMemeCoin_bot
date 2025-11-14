@@ -1,235 +1,844 @@
-Actionable comments posted: 1
+Actionable comments posted: 15
 
-Caution
+🧹 Nitpick comments (1)
+tests/test_performance.py (1)
+71-87: Consider using the loop variable or renaming it.
 
-Some comments are outside the diff and can’t be posted inline due to platform limitations.
+The loop variable i at line 78 is not used within the loop body. While this doesn't affect functionality, following the linting suggestion improves code clarity.
 
-⚠️ Outside diff range comments (1)
-main.py (1)
-21-40: Avoid using logger before logging.basicConfig to keep logging configuration effective
+Apply this diff:
 
-In the try/except ImportError block you call logger.warning before logging.basicConfig is invoked. When health/security import fails, that first log call will cause the logging module to create a default handler, and basicConfig later becomes a no-op. As a result, your intended file + stream configuration may never be applied in that scenario.
-
-To keep logging consistent regardless of whether the health module is available, initialize logging before any logger is used, or replace the early warning with a plain print and move the health/security import block below the basicConfig section.
-
--import logging
--from dotenv import load_dotenv
--from typing import Optional, Any
-+import logging
-+from dotenv import load_dotenv
-+from typing import Optional, Any
-@@
--# Import Health Check and Security modules
--try:
--    from health import start_health_server, health_check, record_trade
--    from security import get_security_manager
--    HEALTH_AVAILABLE = True
--except ImportError:
--    HEALTH_AVAILABLE = False
--    logger = logging.getLogger(__name__)
--    logger.warning("⚠️ Health check module not available")
--
--# Logging Setup (MUST be before any logger usage!)
--logging.basicConfig(
-+# Logging Setup (MUST be before any logger usage!)
-+logging.basicConfig(
-     level=logging.INFO,
-@@
- )
--logger = logging.getLogger(__name__)
-+logger = logging.getLogger(__name__)
-+
-+# Import Health Check and Security modules
-+try:
-+    from health import start_health_server, health_check, record_trade
-+    from security import get_security_manager
-+    HEALTH_AVAILABLE = True
-+except ImportError:
-+    HEALTH_AVAILABLE = False
-+    logger.warning("⚠️ Health check module not available")
-🧹 Nitpick comments (10)
-utils.py (5)
-51-55: format_price implementation is fine but currently not exported
-
-The function does what it promises and matches typical test expectations, but it’s not present in __all__. If other modules or tests rely on from utils import *, they won’t see it.
-
-Consider adding it to __all__ for consistency with the other formatting helpers.
-
- __all__ = [
--    'format_number',
-+    'format_number',
-+    'format_price',
-86-87: Alias validate_token_address is useful; consider exporting it explicitly
-
-The alias to is_valid_solana_address should satisfy tests expecting validate_token_address. To make it discoverable and consistent with other public helpers, export it via __all__ as well.
-
- __all__ = [
-@@
--    'is_valid_solana_address',
-+    'is_valid_solana_address',
-+    'validate_token_address',
-362-368: calculate_percentage_change zero-handling is fine; consider exporting and clarifying semantics
-
-The implementation is straightforward and handles old_value == 0 by returning 0.0. That behavior is reasonable but slightly non-obvious (some domains might expect inf or a special marker).
-
-Add a short note to the docstring clarifying that when old_value is zero, the function returns 0.0.
-Add it to __all__ so it’s clearly part of the public API, in line with the PR objective.
- def calculate_percentage_change(old_value: float, new_value: float) -> float:
-     """
--    Berechnet prozentuale Änderung zwischen zwei Werten
-+    Berechnet prozentuale Änderung zwischen zwei Werten.
-+    Wenn old_value == 0, wird 0.0 zurückgegeben, um Division durch 0 zu vermeiden.
-@@
- __all__ = [
-@@
--    'calculate_slippage',
-+    'calculate_slippage',
-+    'calculate_percentage_change',
-229-245: Add functools.wraps and validate max_attempts parameter
-
-The decorator needs two improvements:
-
-Add @functools.wraps(func) on the wrapper to preserve the original function's metadata (__name__, __doc__, __wrapped__), which is the standard way to ensure decorators preserve wrapped function metadata.
-Validate that max_attempts >= 1 at decorator initialization; otherwise last_exception remains None and raise None occurs.
-Consider whether catching all Exception is intentional; a narrower set prevents hiding programming errors.
--from typing import Dict, Any, List, Optional, Tuple
-+from typing import Dict, Any, List, Optional, Tuple
-@@
--from functools import lru_cache
-+from functools import lru_cache, wraps
-@@
- def retry_on_failure(max_attempts: int = 3, delay: float = 0.5):
-@@
-+    if max_attempts <= 0:
-+        raise ValueError("max_attempts must be >= 1")
-+
-     def decorator(func):
--        async def wrapper(*args, **kwargs):
-+        @wraps(func)
-+        async def wrapper(*args, **kwargs):
-             last_exception = None
-             for attempt in range(max_attempts):
-                 try:
-                     return await func(*args, **kwargs)
-                 except Exception as e:
-                     last_exception = e
-                     if attempt < max_attempts - 1:
-                         await asyncio.sleep(delay)
-             raise last_exception
-+
-         return wrapper
-208-227: retry_async should narrow exception handling and validate input parameters
-
-The retry loop is correct and logs progressively longer waits. Two optional robustness improvements are recommended:
-
-Narrow except Exception to specific exception types (e.g., aiohttp.ClientError, asyncio.TimeoutError) to avoid masking unexpected bugs. This aligns with your codebase's pattern in run_with_timeout() which catches asyncio.TimeoutError specifically.
-Guard against max_retries <= 0 to prevent raising None from last_exception.
-main.py (5)
-56-77: Security manager is conditionally initialized; consider a separate availability flag
-
-Tying security_manager initialization strictly to HEALTH_AVAILABLE is workable if both modules always ship together, but it also means any ImportError in the health module disables security auditing entirely.
-
-If you intend security to be independently optional, consider a separate SECURITY_AVAILABLE flag and a separate import try for security. If health and security are tightly coupled by design, a short comment explaining that coupling would help future maintainers.
-
-134-149: Startup message correctly reflects AI and health status; consider making security status conditional
-
-The enhanced startup message includes AI and health status and advertises the health endpoint, which is helpful. The Security: ✅ Active line is always shown, even when the health/security modules are unavailable.
-
-To avoid confusing operators when HEALTH_AVAILABLE is false, you might want to make the security line conditional as well (e.g., mirror health_status).
-
--        await telegram_bot.send_message(
-+        security_status = "✅ Active" if self.security_manager else "⚠️ Disabled"
-+        await telegram_bot.send_message(
-             f"""
-@@
--Health Checks: {health_status}
--Security: ✅ Active
-+Health Checks: {health_status}
-+Security: {security_status}
-@@
--Health: http://localhost:8000/health
-+Health: http://localhost:8000/health
-             """,
-244-257: Shutdown audit logging is valuable; watch for broad Exception masking
-
-Emitting a BOT_SHUTDOWN audit entry with uptime and open positions is a solid addition. The broad except Exception ensures shutdown isn’t blocked by audit logging failures, which may be acceptable here.
-
-If you want to distinguish between expected I/O problems and unexpected programming errors, you could narrow this except clause (e.g., to OSError) and let truly unexpected issues bubble up or at least be logged with logger.exception.
-
-274-280: Use logger.exception() for better traceback capture on cleanup errors
-
-The cleanup of self.health_runner via await self.health_runner.cleanup() is the documented way to stop an aiohttp server and perform graceful shutdown. To improve operational debugging, swap logger.warning for logger.exception to automatically capture the full traceback if cleanup fails:
-
-        if HEALTH_AVAILABLE and self.health_runner:
-            try:
-                await self.health_runner.cleanup()
-                logger.info("✅ Health Check Server gestoppt")
-            except Exception as e:
--                logger.warning(f"⚠️ Health Check cleanup warning: {e}")
-+                logger.exception("⚠️ Health Check cleanup warning")
-159-177: Use logging.exception() for better exception logging with automatic stack trace capture
-
-Inside an except block, logging.exception() is the preferred approach over logging.error() when a stack trace is needed. It is equivalent to logging.error(..., exc_info=True) and will record the full stack trace for the currently handled exception.
-
-Apply the suggested change:
-
-        except Exception as e:
--            logger.error(f"❌ Scanner Start Fehler: {e}")
-+            logger.exception("❌ Scanner Start Fehler")
-             if HEALTH_AVAILABLE:
-                 health_check.update_component_status("scanner", "unhealthy")
+-        for i in range(1000):
++        for _ in range(1000):
+             # Mock message processing
+             _ = {"type": "token", "data": {}}
+             messages_processed += 1
 📜 Review details
-.pre-commit-config.yaml
-Comment on lines +1 to +41
-repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
-    hooks:
-      - id: trailing-whitespace
-      - id: end-of-file-fixer
-      - id: check-yaml
-      - id: check-added-large-files
-        args: ['--maxkb=1000']
-      - id: check-merge-conflict
-      - id: detect-private-key
+CHANGELOG.md
 
-  - repo: https://github.com/psf/black
-    rev: 23.12.0
-    hooks:
-      - id: black
-        language_version: python3.10
-        args: ['--line-length=120']
+## [2.0.1] - 2025-11-14
 
-  - repo: https://github.com/pycqa/isort
-    rev: 5.13.2
-    hooks:
-      - id: isort
-        args: ['--profile', 'black', '--line-length', '120']
-
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.7.5
-    hooks:
-      - id: bandit
-        args: ['-c', '.bandit', '-r', '.']
-        exclude: ^tests/
-
-  - repo: local
-    hooks:
-      - id: pytest-check
-        name: pytest-check
-        entry: pytest
-        language: system
-        pass_filenames: false
-        always_run: true
-        args: ['--co', '-q']
+### 🚀 Production Hardening Complete (82/100 → 95/100)
 @coderabbitai
 coderabbitai bot
-1 minute ago
+2 minutes ago
+⚠️ Potential issue | 🟡 Minor
+
+Verify score progression consistency.
+
+The changelog states "82/100 → 95/100" but the PR title claims "95/100 → 98/100". Please ensure the score progression is consistent across all documentation.
+
+🤖 Prompt for AI Agents
+@0xxCool	Reply...
+tests/test_analyzer_integration.py
+Comment on lines +13 to +28
+    async def test_analyzer_token_analysis(self, mock_token_data):
+        """Test analyzer can analyze tokens"""
+        from analyzer import Analyzer
+
+        analyzer = Analyzer()
+
+        # Mock analysis
+        result = {
+            "score": 75,
+            "risk_level": "MEDIUM",
+            "confidence": 0.8,
+        }
+
+        assert result["score"] >= 0
+        assert result["score"] <= 100
+        assert result["risk_level"] in ["LOW", "MEDIUM", "HIGH", "EXTREME"]
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+⚠️ Potential issue | 🟠 Major
+
+Test validates mock data instead of testing analyzer.
+
+This test creates an Analyzer instance but never calls any analyzer methods. Instead, it creates a hardcoded result dictionary and validates that dictionary. This tests the test data itself, not the analyzer's actual behavior.
+
+Apply this diff to test actual analyzer functionality:
+
+     async def test_analyzer_token_analysis(self, mock_token_data):
+         """Test analyzer can analyze tokens"""
+         from analyzer import Analyzer
+ 
+         analyzer = Analyzer()
+ 
+-        # Mock analysis
+-        result = {
+-            "score": 75,
+-            "risk_level": "MEDIUM",
+-            "confidence": 0.8,
+-        }
++        # Actually call analyzer methods
++        result = await analyzer.analyze_token(mock_token_data)
+ 
+         assert result["score"] >= 0
+         assert result["score"] <= 100
+         assert result["risk_level"] in ["LOW", "MEDIUM", "HIGH", "EXTREME"]
+📝 Committable suggestion
+‼️ IMPORTANT
+Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
+
+Suggested change
+    async def test_analyzer_token_analysis(self, mock_token_data):
+        """Test analyzer can analyze tokens"""
+        from analyzer import Analyzer
+        analyzer = Analyzer()
+        # Mock analysis
+        result = {
+            "score": 75,
+            "risk_level": "MEDIUM",
+            "confidence": 0.8,
+        }
+        assert result["score"] >= 0
+        assert result["score"] <= 100
+        assert result["risk_level"] in ["LOW", "MEDIUM", "HIGH", "EXTREME"]
+    async def test_analyzer_token_analysis(self, mock_token_data):
+        """Test analyzer can analyze tokens"""
+        from analyzer import Analyzer
+        analyzer = Analyzer()
+        # Actually call analyzer methods
+        result = await analyzer.analyze_token(mock_token_data)
+        assert result["score"] >= 0
+        assert result["score"] <= 100
+        assert result["risk_level"] in ["LOW", "MEDIUM", "HIGH", "EXTREME"]
+🧰 Tools
+@0xxCool	Reply...
+tests/test_analyzer_integration.py
+Comment on lines +30 to +40
+    @patch('analyzer.aiohttp.ClientSession')
+    async def test_analyzer_api_calls(self, mock_session):
+        """Test analyzer makes proper API calls"""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json.return_value = {"status": "ok"}
+
+        mock_session.return_value.__aenter__.return_value.get.return_value.__aenter__.return_value = mock_response
+
+        # Should not raise exception
+        assert True
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+⚠️ Potential issue | 🟠 Major
+
+Test doesn't verify API call behavior.
+
+This test sets up comprehensive mocks for aiohttp ClientSession but then just asserts True without actually testing any analyzer API call functionality. The mock setup is wasted.
+
+Apply this diff to test actual API behavior:
+
+     @patch('analyzer.aiohttp.ClientSession')
+     async def test_analyzer_api_calls(self, mock_session):
+         """Test analyzer makes proper API calls"""
+         mock_response = AsyncMock()
+         mock_response.status = 200
+         mock_response.json.return_value = {"status": "ok"}
+ 
+         mock_session.return_value.__aenter__.return_value.get.return_value.__aenter__.return_value = mock_response
+ 
+-        # Should not raise exception
+-        assert True
++        from analyzer import Analyzer
++        analyzer = Analyzer()
++        
++        # Test API call functionality
++        # Example: result = await analyzer.fetch_external_data(token_address)
++        # Verify mock_session.return_value.__aenter__.return_value.get.called
++        # assert result is not None
+Committable suggestion skipped: line range outside the PR's diff.
+
+🤖 Prompt for AI Agents
+@0xxCool	Reply...
+tests/test_analyzer_integration.py
+Comment on lines +42 to +54
+    async def test_analyzer_rugcheck_integration(self, mock_token_data):
+        """Test RugCheck API integration"""
+        token_address = mock_token_data["address"]
+
+        # Mock RugCheck response
+        rugcheck_data = {
+            "score": 8.5,
+            "risks": [],
+            "verified": True,
+        }
+
+        assert rugcheck_data["score"] >= 0
+        assert isinstance(rugcheck_data["risks"], list)
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+⚠️ Potential issue | 🟠 Major
+
+Test validates mock data without calling analyzer.
+
+This test extracts the token address from mock data and creates a hardcoded RugCheck response, but never actually calls any analyzer methods to test RugCheck integration. The token_address variable is unused.
+
+Apply this diff to test actual RugCheck integration:
+
+     async def test_analyzer_rugcheck_integration(self, mock_token_data):
+         """Test RugCheck API integration"""
+         token_address = mock_token_data["address"]
+ 
+-        # Mock RugCheck response
+-        rugcheck_data = {
+-            "score": 8.5,
+-            "risks": [],
+-            "verified": True,
+-        }
++        from analyzer import Analyzer
++        analyzer = Analyzer()
++        
++        # Test RugCheck integration
++        rugcheck_data = await analyzer.check_rugcheck(token_address)
+ 
+         assert rugcheck_data["score"] >= 0
+         assert isinstance(rugcheck_data["risks"], list)
+Committable suggestion skipped: line range outside the PR's diff.
+
+🧰 Tools
+🤖 Prompt for AI Agents
+@0xxCool	Reply...
+tests/test_e2e.py
+Comment on lines +14 to +27
+    @patch('telegram_bot.send_message')
+    async def test_bot_startup_sequence(self, mock_telegram):
+        """Test complete bot startup"""
+        mock_telegram.return_value = AsyncMock()
+
+        # Mock environment variables
+        with patch.dict('os.environ', {
+            'PRIVATE_KEY': 'test_key',
+            'TELEGRAM_BOT_TOKEN': 'test_token',
+            'TELEGRAM_CHAT_ID': 'test_chat',
+            'RPC_URL': 'https://api.mainnet-beta.solana.com'
+        }):
+            # Test startup logic
+            assert True
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+🛠️ Refactor suggestion | 🟠 Major
+
+Placeholder test provides no actual coverage.
+
+This test only patches environment variables and asserts True, providing no verification of the bot startup sequence. For a test claiming to verify "complete bot startup," it should actually instantiate components, verify initialization order, and confirm that services start correctly.
+
+Would you like me to help scaffold a proper startup sequence test that verifies component initialization?
+
+@0xxCool	Reply...
+tests/test_e2e.py
+Comment on lines +29 to +57
+    @patch('scanner.Scanner.start')
+    @patch('analyzer.Analyzer.analyze')
+    @patch('trader.Trader.execute_trade')
+    async def test_complete_trading_flow(self, mock_trade, mock_analyze, mock_scan):
+        """Test complete trading flow: scan -> analyze -> trade"""
+        # Mock scanner finding token
+        mock_scan.return_value = AsyncMock()
+
+        # Mock analyzer approving token
+        mock_analyze.return_value = {
+            "score": 85,
+            "should_trade": True,
+            "confidence": 0.9,
+        }
+
+        # Mock successful trade
+        mock_trade.return_value = {
+            "success": True,
+            "tx_signature": "test_signature",
+            "amount": 0.1,
+        }
+
+        # Simulate flow
+        token_found = True
+        if token_found:
+            analysis = mock_analyze.return_value
+            if analysis["should_trade"]:
+                trade_result = mock_trade.return_value
+                assert trade_result["success"] is True
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+🛠️ Refactor suggestion | 🟠 Major
+
+Test doesn't exercise the mocked functions.
+
+The test sets up mocks but never actually calls them. Lines 52-57 only assert against mock_trade.return_value directly rather than invoking the trading flow. This provides no verification that the scan → analyze → trade pipeline works correctly.
+
+Consider this structure to actually test the flow:
+
+ @patch('scanner.Scanner.start')
+ @patch('analyzer.Analyzer.analyze')
+ @patch('trader.Trader.execute_trade')
+ async def test_complete_trading_flow(self, mock_trade, mock_analyze, mock_scan):
+     """Test complete trading flow: scan -> analyze -> trade"""
+-    # Mock scanner finding token
+-    mock_scan.return_value = AsyncMock()
+-
+-    # Mock analyzer approving token
+-    mock_analyze.return_value = {
++    mock_token = {"address": "test_addr", "symbol": "TEST"}
++    mock_scan.return_value = mock_token
++    
++    mock_analyze.return_value = {
+         "score": 85,
+         "should_trade": True,
+         "confidence": 0.9,
+     }
+-
+-    # Mock successful trade
++    
+     mock_trade.return_value = {
+         "success": True,
+         "tx_signature": "test_signature",
+         "amount": 0.1,
+     }
+-
+-    # Simulate flow
+-    token_found = True
+-    if token_found:
+-        analysis = mock_analyze.return_value
+-        if analysis["should_trade"]:
+-            trade_result = mock_trade.return_value
+-            assert trade_result["success"] is True
++    
++    # Actually invoke the flow
++    scanner = Scanner()
++    token = await scanner.start()
++    
++    analyzer = Analyzer()
++    analysis = await analyzer.analyze(token)
++    
++    if analysis["should_trade"]:
++        trader = Trader()
++        result = await trader.execute_trade(token, analysis)
++        assert result["success"] is True
++        mock_scan.assert_called_once()
++        mock_analyze.assert_called_once()
++        mock_trade.assert_called_once()
+📝 Committable suggestion
+‼️ IMPORTANT
+Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
+
+Suggested change
+    @patch('scanner.Scanner.start')
+    @patch('analyzer.Analyzer.analyze')
+    @patch('trader.Trader.execute_trade')
+    async def test_complete_trading_flow(self, mock_trade, mock_analyze, mock_scan):
+        """Test complete trading flow: scan -> analyze -> trade"""
+        # Mock scanner finding token
+        mock_scan.return_value = AsyncMock()
+        # Mock analyzer approving token
+        mock_analyze.return_value = {
+            "score": 85,
+            "should_trade": True,
+            "confidence": 0.9,
+        }
+        # Mock successful trade
+        mock_trade.return_value = {
+            "success": True,
+            "tx_signature": "test_signature",
+            "amount": 0.1,
+        }
+        # Simulate flow
+        token_found = True
+        if token_found:
+            analysis = mock_analyze.return_value
+            if analysis["should_trade"]:
+                trade_result = mock_trade.return_value
+                assert trade_result["success"] is True
+    @patch('scanner.Scanner.start')
+    @patch('analyzer.Analyzer.analyze')
+    @patch('trader.Trader.execute_trade')
+    async def test_complete_trading_flow(self, mock_trade, mock_analyze, mock_scan):
+        """Test complete trading flow: scan -> analyze -> trade"""
+        mock_token = {"address": "test_addr", "symbol": "TEST"}
+        mock_scan.return_value = mock_token
+        
+        mock_analyze.return_value = {
+            "score": 85,
+            "should_trade": True,
+            "confidence": 0.9,
+        }
+        
+        mock_trade.return_value = {
+            "success": True,
+            "tx_signature": "test_signature",
+            "amount": 0.1,
+        }
+        
+        # Actually invoke the flow
+        scanner = Scanner()
+        token = await scanner.start()
+        
+        analyzer = Analyzer()
+        analysis = await analyzer.analyze(token)
+        
+        if analysis["should_trade"]:
+            trader = Trader()
+            result = await trader.execute_trade(token, analysis)
+            assert result["success"] is True
+            mock_scan.assert_called_once()
+            mock_analyze.assert_called_once()
+            mock_trade.assert_called_once()
+🤖 Prompt for AI Agents
+@0xxCool	Reply...
+tests/test_e2e.py
+Comment on lines +59 to +76
+    async def test_error_recovery(self):
+        """Test bot recovers from errors"""
+        # Simulate various error conditions
+        errors_handled = []
+
+        # Network error
+        try:
+            raise ConnectionError("Network error")
+        except ConnectionError as e:
+            errors_handled.append("network")
+
+        # API error
+        try:
+            raise ValueError("API error")
+        except ValueError:
+            errors_handled.append("api")
+
+        assert len(errors_handled) == 2
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+🛠️ Refactor suggestion | 🟠 Major
+
+Test doesn't verify actual error recovery mechanisms.
+
+This test manually raises and catches exceptions but doesn't exercise the bot's error recovery logic. It's testing Python's exception handling, not the bot's resilience patterns (retry logic, circuit breakers, fallback strategies, etc.).
+
+Additionally, address the static analysis findings:
+
+Line 67: Remove unused variable e
+Consider extracting error simulation into helper functions to satisfy TRY301
+-        try:
+-            raise ConnectionError("Network error")
+-        except ConnectionError as e:
+-            errors_handled.append("network")
++        try:
++            raise ConnectionError("Network error")
++        except ConnectionError:
++            errors_handled.append("network")
+📝 Committable suggestion
+‼️ IMPORTANT
+Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
+
+Suggested change
+    async def test_error_recovery(self):
+        """Test bot recovers from errors"""
+        # Simulate various error conditions
+        errors_handled = []
+        # Network error
+        try:
+            raise ConnectionError("Network error")
+        except ConnectionError as e:
+            errors_handled.append("network")
+        # API error
+        try:
+            raise ValueError("API error")
+        except ValueError:
+            errors_handled.append("api")
+        assert len(errors_handled) == 2
+    async def test_error_recovery(self):
+        """Test bot recovers from errors"""
+        # Simulate various error conditions
+        errors_handled = []
+        # Network error
+        try:
+            raise ConnectionError("Network error")
+        except ConnectionError:
+            errors_handled.append("network")
+        # API error
+        try:
+            raise ValueError("API error")
+        except ValueError:
+            errors_handled.append("api")
+        assert len(errors_handled) == 2
+🧰 Tools
+@0xxCool	Reply...
+tests/test_performance.py
+Comment on lines +89 to +106
+    def test_cache_effectiveness(self):
+        """Test caching improves performance"""
+        from utils import AsyncCache
+
+        cache = AsyncCache(ttl=60)
+
+        # First access - cache miss
+        start_time = time.time()
+        cache.cache["test_key"] = ("test_value", time.time())
+        first_access_time = time.time() - start_time
+
+        # Second access - cache hit
+        start_time = time.time()
+        _ = cache.cache.get("test_key")
+        second_access_time = time.time() - start_time
+
+        # Cache hit should be faster
+        assert second_access_time <= first_access_time * 2
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+⚠️ Potential issue | 🟠 Major
+
+Test bypasses AsyncCache's async interface.
+
+This test directly accesses cache.cache dictionary (line 97) and uses .get() on the dict (line 102) instead of using the AsyncCache's async get() and set() methods. This doesn't properly test the cache's actual API and defeats the purpose of having async methods. Additionally, the test is not async despite using an AsyncCache.
+
+Apply this diff to properly test the async cache interface:
+
+-    def test_cache_effectiveness(self):
++    @pytest.mark.asyncio
++    async def test_cache_effectiveness(self):
+         """Test caching improves performance"""
+         from utils import AsyncCache
+ 
+         cache = AsyncCache(ttl=60)
+ 
+         # First access - cache miss
+         start_time = time.time()
+-        cache.cache["test_key"] = ("test_value", time.time())
++        await cache.set("test_key", "test_value")
+         first_access_time = time.time() - start_time
+ 
+         # Second access - cache hit
+         start_time = time.time()
+-        _ = cache.cache.get("test_key")
++        value = await cache.get("test_key")
+         second_access_time = time.time() - start_time
+ 
+         # Cache hit should be faster
++        assert value == "test_value"
+         assert second_access_time <= first_access_time * 2
+🤖 Prompt for AI Agents
+@0xxCool	Reply...
+tests/test_scanner_integration.py
+Comment on lines +13 to +20
+    async def test_scanner_initialization(self):
+        """Test scanner can be initialized"""
+        from scanner import Scanner
+
+        scanner = Scanner()
+        assert scanner is not None
+        assert hasattr(scanner, 'start')
+        assert hasattr(scanner, 'stop')
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+🛠️ Refactor suggestion | 🟠 Major
+
+Test only validates attributes, not functionality.
+
+This test creates a Scanner instance and checks that start and stop attributes exist, but doesn't actually test scanner initialization logic or verify that the scanner is properly configured. For an integration test, consider actually calling start() and verifying the scanner enters the expected state.
+
+Apply this diff to make the test more meaningful:
+
+     async def test_scanner_initialization(self):
+         """Test scanner can be initialized"""
+         from scanner import Scanner
+ 
+         scanner = Scanner()
+         assert scanner is not None
+-        assert hasattr(scanner, 'start')
+-        assert hasattr(scanner, 'stop')
++        
++        # Verify scanner has required attributes and methods
++        assert hasattr(scanner, 'start')
++        assert hasattr(scanner, 'stop')
++        assert callable(scanner.start)
++        assert callable(scanner.stop)
++        
++        # Verify initial state
++        # Add assertions based on expected initial state
+🤖 Prompt for AI Agents
+@0xxCool	Reply...
+tests/test_scanner_integration.py
+Comment on lines +22 to +36
+    @patch('scanner.websockets.connect')
+    async def test_scanner_websocket_connection(self, mock_ws_connect):
+        """Test scanner can connect to WebSocket"""
+        mock_ws = AsyncMock()
+        mock_ws_connect.return_value.__aenter__.return_value = mock_ws
+
+        from scanner import Scanner
+        scanner = Scanner()
+
+        # Should not raise exception
+        try:
+            # Test connection logic without actually connecting
+            assert True
+        except Exception as e:
+            pytest.fail(f"Scanner connection test failed: {e}")
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+⚠️ Potential issue | 🟠 Major
+
+Test doesn't actually verify WebSocket connection behavior.
+
+This test sets up mocks for WebSocket connection but then just asserts True without testing any actual connection logic. The try-except block catches all exceptions but doesn't invoke any scanner methods that would use the mocked WebSocket.
+
+Apply this diff to test actual connection behavior:
+
+     @patch('scanner.websockets.connect')
+     async def test_scanner_websocket_connection(self, mock_ws_connect):
+         """Test scanner can connect to WebSocket"""
+         mock_ws = AsyncMock()
+         mock_ws_connect.return_value.__aenter__.return_value = mock_ws
+ 
+         from scanner import Scanner
+         scanner = Scanner()
+ 
+-        # Should not raise exception
+-        try:
+-            # Test connection logic without actually connecting
+-            assert True
+-        except Exception as e:
+-            pytest.fail(f"Scanner connection test failed: {e}")
++        # Test actual connection behavior
++        # Example: await scanner.connect() or scanner.start()
++        # Verify the mock was called
++        # assert mock_ws_connect.called
+Committable suggestion skipped: line range outside the PR's diff.
+
+🧰 Tools
+@0xxCool	Reply...
+tests/test_scanner_integration.py
+Comment on lines +38 to +53
+    async def test_scanner_token_processing(self):
+        """Test scanner can process token data"""
+        from scanner import Scanner
+
+        scanner = Scanner()
+
+        # Mock token data
+        token_data = {
+            "address": "So11111111111111111111111111111111111111112",
+            "symbol": "TEST",
+            "liquidity": 10000,
+            "volume_24h": 50000,
+        }
+
+        # Should process without error
+        assert token_data["address"] is not None
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+⚠️ Potential issue | 🟠 Major
+
+Test creates data but doesn't test any processing logic.
+
+This test creates a Scanner instance and mock token data, but never actually calls any scanner processing methods. It only asserts that the token address is not None, which tests the test data itself, not the scanner.
+
+Apply this diff to test actual token processing:
+
+     async def test_scanner_token_processing(self):
+         """Test scanner can process token data"""
+         from scanner import Scanner
+ 
+         scanner = Scanner()
+ 
+         # Mock token data
+         token_data = {
+             "address": "So11111111111111111111111111111111111111112",
+             "symbol": "TEST",
+             "liquidity": 10000,
+             "volume_24h": 50000,
+         }
+ 
+-        # Should process without error
+-        assert token_data["address"] is not None
++        # Actually test scanner processing
++        # Example: result = await scanner.process_token(token_data)
++        # assert result is not None
++        # Verify token was processed correctly
+Committable suggestion skipped: line range outside the PR's diff.
+
+🧰 Tools
+🤖 Prompt for AI Agents
+@0xxCool	Reply...
+tests/test_trader_integration.py
+Comment on lines +13 to +19
+    async def test_trader_initialization(self):
+        """Test trader can be initialized"""
+        from trader import Trader
+
+        trader = Trader()
+        assert trader is not None
+        assert hasattr(trader, 'execute_trade')
+@coderabbitai
+coderabbitai bot
+2 minutes ago
 ⚠️ Potential issue | 🔴 Critical
 
 🧩 Analysis chain
-Missing .bandit configuration file will cause pre-commit hook to fail at runtime
+Remove the incorrect execute_trade assertion from the test.
 
-The .bandit file referenced in the Bandit hook (args: ['-c', '.bandit', '-r', '.']) does not exist in the repository. When the pre-commit hook runs, Bandit will fail because it cannot find the specified config file.
+The test asserts hasattr(trader, 'execute_trade') at line 18, but the Trader class in trader.py has no execute_trade method. The class only implements open_position, close_position, update_positions, get_active_positions, and get_stats. This assertion will fail and should be removed or replaced with an assertion for a method that actually exists (e.g., assert hasattr(trader, 'open_position')).
 
-Action required: Either create a .bandit config file in the repo root, or remove the -c .bandit argument from the Bandit hook args and rely on Bandit's default behavior (or specify an existing config location).
+🤖 Prompt for AI Agents
+@0xxCool	Reply...
+tests/test_trader_integration.py
+Comment on lines +21 to +30
+    @patch('trader.asyncio.create_subprocess_exec')
+    async def test_trader_jupiter_integration(self, mock_subprocess):
+        """Test Jupiter swap integration"""
+        mock_process = AsyncMock()
+        mock_process.communicate.return_value = (b'{"success": true}', b'')
+        mock_process.returncode = 0
+        mock_subprocess.return_value = mock_process
+
+        # Should handle Jupiter API calls
+        assert True
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+🛠️ Refactor suggestion | 🟠 Major
+
+Placeholder test provides no actual coverage.
+
+This test sets up subprocess mocking but only asserts True, without actually testing Jupiter integration. The comment "Should handle Jupiter API calls" indicates incomplete implementation.
+
+Would you like me to help generate a proper Jupiter integration test that verifies subprocess interaction?
+
+🤖 Prompt for AI Agents
+@0xxCool	Reply...
+tests/test_trader_integration.py
+Comment on lines +32 to +48
+    async def test_trader_position_management(self, mock_token_data):
+        """Test position tracking"""
+        from trader import Trader
+
+        trader = Trader()
+
+        # Mock position
+        position = {
+            "token_address": mock_token_data["address"],
+            "amount": 100.0,
+            "entry_price": 0.001,
+            "current_price": 0.0015,
+        }
+
+        # Calculate P&L
+        pnl = (position["current_price"] - position["entry_price"]) / position["entry_price"] * 100
+        assert pnl == 50.0  # 50% profit
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+🛠️ Refactor suggestion | 🟠 Major
+
+Test doesn't exercise Trader's position management.
+
+The test creates a Trader instance (line 36) but never uses it, instead manually calculating P&L on a mock dictionary. This doesn't verify that the Trader class correctly tracks positions or calculates P&L through its actual methods.
+
+Based on the Trader class structure from trader.py, consider testing actual position management:
+
+ async def test_trader_position_management(self, mock_token_data):
+     """Test position tracking"""
+     from trader import Trader
++    from unittest.mock import MagicMock
+ 
+     trader = Trader()
++    await trader.initialize()
+ 
+-    # Mock position
+-    position = {
+-        "token_address": mock_token_data["address"],
+-        "amount": 100.0,
+-        "entry_price": 0.001,
+-        "current_price": 0.0015,
+-    }
+-
+-    # Calculate P&L
+-    pnl = (position["current_price"] - position["entry_price"]) / position["entry_price"] * 100
+-    assert pnl == 50.0  # 50% profit
++    # Create mock token metrics
++    mock_metrics = MagicMock()
++    mock_metrics.address = mock_token_data["address"]
++    mock_metrics.symbol = "TEST"
++    
++    # Test position tracking through Trader's actual methods
++    position = await trader.open_position(mock_metrics, 0.1)
++    assert position is not None
++    assert len(trader.get_active_positions()) == 1
+📝 Committable suggestion
+‼️ IMPORTANT
+Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
+
+Suggested change
+    async def test_trader_position_management(self, mock_token_data):
+        """Test position tracking"""
+        from trader import Trader
+        trader = Trader()
+        # Mock position
+        position = {
+            "token_address": mock_token_data["address"],
+            "amount": 100.0,
+            "entry_price": 0.001,
+            "current_price": 0.0015,
+        }
+        # Calculate P&L
+        pnl = (position["current_price"] - position["entry_price"]) / position["entry_price"] * 100
+        assert pnl == 50.0  # 50% profit
+    async def test_trader_position_management(self, mock_token_data):
+        """Test position tracking"""
+        from trader import Trader
+        from unittest.mock import MagicMock
+        trader = Trader()
+        await trader.initialize()
+        # Create mock token metrics
+        mock_metrics = MagicMock()
+        mock_metrics.address = mock_token_data["address"]
+        mock_metrics.symbol = "TEST"
+        
+        # Test position tracking through Trader's actual methods
+        position = await trader.open_position(mock_metrics, 0.1)
+        assert position is not None
+        assert len(trader.get_active_positions()) == 1
+🧰 Tools
+🤖 Prompt for AI Agents
+@0xxCool	Reply...
+tests/test_trader_integration.py
+Comment on lines +50 to +61
+    async def test_trader_risk_management(self):
+        """Test risk management features"""
+        # Mock risk parameters
+        risk_params = {
+            "max_position_size": 0.5,
+            "stop_loss_percent": 15,
+            "take_profit_percent": 50,
+        }
+
+        assert risk_params["max_position_size"] <= 1.0
+        assert risk_params["stop_loss_percent"] > 0
+        assert risk_params["take_profit_percent"] > 0
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+🛠️ Refactor suggestion | 🟠 Major
+
+Test validates mock data instead of Trader's risk management.
+
+This test creates a dictionary and asserts basic constraints on it, but doesn't verify that the Trader class actually enforces risk management rules. It should test actual Trader behavior like position size limits, stop-loss triggers, or risk parameter validation.
+
+Consider testing actual risk management through the Trader class:
+
+async def test_trader_risk_management(self):
+    """Test risk management features"""
+    from trader import Trader
+    
+    trader = Trader()
+    await trader.initialize()
+    
+    # Verify stop-loss and take-profit are set on positions
+    # Test that positions are closed when limits are hit
+    # Verify max position size constraints are enforced
