@@ -1,0 +1,17 @@
+[MASTER]
+ignore=tests,venv,windows,android
+jobs=4
+
+[MESSAGES CONTROL]
+disable=C0114,C0115,C0116,W0511,R0913,R0914,R0912,R0915,C0301
+
+[FORMAT]
+max-line-length=120
+
+[BASIC]
+good-names=i,j,k,ex,_,db,id
+
+[DESIGN]
+max-args=8
+max-attributes=12
+max-locals=20

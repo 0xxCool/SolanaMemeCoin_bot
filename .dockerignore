@@ -1,0 +1,59 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.tox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Data
+data/
+models/
+*.db
+*.sqlite
+
+# Documentation (not needed in container)
+*.md
+docs/
+
+# Build files
+windows/
+android/
+dist/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# CI/CD
+.github/
