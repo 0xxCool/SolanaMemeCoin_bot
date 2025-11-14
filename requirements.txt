@@ -44,8 +44,15 @@ orjson==3.9.10  # Schnelleres JSON
 # Testing
 pytest==7.4.3
 pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+pytest-mock==3.12.0
 
 # Code Quality
 black==23.12.0
 pylint==3.0.3
 mypy==1.7.1
+
+# Security
+cryptography==41.0.7
+bandit==1.7.5
+safety==2.3.5

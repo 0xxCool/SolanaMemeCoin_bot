@@ -76,3 +76,25 @@ android/dist/*
 android/.buildozer/
 android/*.apk
 android/*.aab
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+coverage.xml
+*.cover
+
+# Security
+bandit-report.json
+safety-report.json
+logs/audit.log
+
+# Monitoring
+grafana-data/
+prometheus-data/
+
+# Docker
+docker-compose.override.yml
