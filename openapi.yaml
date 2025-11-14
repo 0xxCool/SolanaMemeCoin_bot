@@ -1,0 +1,541 @@
+openapi: 3.0.3
+info:
+  title: Solana Memecoin Trading Bot API
+  description: |
+    **Advanced AI-Powered Trading Bot API** for Solana memecoin trading with real-time WebSocket scanning,
+    ML-based predictions, and automated trading capabilities.
+
+    ## Features
+    - Real-time token scanning via WebSocket
+    - 3-layer token analysis (Basic, Advanced, ML)
+    - AI-powered trade decisions (LSTM + DQN + Ensemble)
+    - Automated trading with risk management
+    - Multi-platform support (Desktop, Android, Telegram)
+    - Health monitoring and metrics
+
+    ## Security
+    - AES-256 encryption for sensitive data
+    - Audit logging for all critical operations
+    - Rate limiting on all endpoints
+    - Input sanitization and validation
+
+  version: 2.0.0
+  contact:
+    name: Solana Bot Support
+    email: support@solanabot.example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: http://localhost:5000
+    description: Bot API server
+
+tags:
+  - name: Health
+    description: Health check and monitoring endpoints
+  - name: Scanner
+    description: Token scanning operations
+  - name: Analyzer
+    description: Token analysis operations
+  - name: Trader
+    description: Trading operations
+  - name: AI Engine
+    description: AI/ML prediction operations
+  - name: Database
+    description: Database query operations
+  - name: Telegram
+    description: Telegram bot operations
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check endpoint
+      description: Returns the overall health status of the bot and all its components
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  /ready:
+    get:
+      tags:
+        - Health
+      summary: Readiness check
+      description: Checks if the bot is ready to accept requests
+      operationId: getReadiness
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessStatus'
+        '503':
+          description: Service is not ready
+
+  /alive:
+    get:
+      tags:
+        - Health
+      summary: Liveness check
+      description: Checks if the bot process is alive
+      operationId: getLiveness
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LivenessStatus'
+
+  /metrics:
+    get:
+      tags:
+        - Health
+      summary: Prometheus metrics
+      description: Returns Prometheus-formatted metrics for monitoring
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Metrics retrieved successfully
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: |
+                  # HELP trades_total Total number of trades
+                  # TYPE trades_total counter
+                  trades_total{action="buy"} 42
+                  trades_total{action="sell"} 38
+
+  /api/scan/status:
+    get:
+      tags:
+        - Scanner
+      summary: Get scanner status
+      description: Returns current status of the token scanner
+      operationId: getScannerStatus
+      responses:
+        '200':
+          description: Scanner status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScannerStatus'
+
+  /api/analyze/token:
+    post:
+      tags:
+        - Analyzer
+      summary: Analyze a specific token
+      description: Performs comprehensive 3-layer analysis on a token
+      operationId: analyzeToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenAnalysisRequest'
+      responses:
+        '200':
+          description: Analysis completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenAnalysisResult'
+        '400':
+          description: Invalid request
+        '429':
+          description: Rate limit exceeded
+
+  /api/trade/execute:
+    post:
+      tags:
+        - Trader
+      summary: Execute a trade
+      description: Executes a buy or sell trade for a specified token
+      operationId: executeTrade
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TradeRequest'
+      responses:
+        '200':
+          description: Trade executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradeResult'
+        '400':
+          description: Invalid trade request
+        '403':
+          description: Trade not allowed (risk limits, etc.)
+        '500':
+          description: Trade execution failed
+
+  /api/ai/predict:
+    post:
+      tags:
+        - AI Engine
+      summary: Get AI prediction for a token
+      description: Returns ML-based prediction including expected return, confidence, and recommended action
+      operationId: getPrediction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PredictionRequest'
+      responses:
+        '200':
+          description: Prediction generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictionResult'
+
+  /api/positions:
+    get:
+      tags:
+        - Trader
+      summary: Get active positions
+      description: Returns all currently active trading positions
+      operationId: getPositions
+      responses:
+        '200':
+          description: Positions retrieved
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Position'
+
+  /api/trades/history:
+    get:
+      tags:
+        - Database
+      summary: Get trade history
+      description: Returns historical trade data with optional filters
+      operationId: getTradeHistory
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 500
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [success, failed, pending]
+      responses:
+        '200':
+          description: Trade history retrieved
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TradeHistory'
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        uptime:
+          type: number
+          description: Uptime in seconds
+        components:
+          type: object
+          properties:
+            scanner:
+              type: string
+              enum: [healthy, degraded, unhealthy, unknown]
+            analyzer:
+              type: string
+            trader:
+              type: string
+            ai_engine:
+              type: string
+            database:
+              type: string
+            telegram_bot:
+              type: string
+
+    ReadinessStatus:
+      type: object
+      properties:
+        ready:
+          type: boolean
+        checks:
+          type: object
+          properties:
+            database:
+              type: boolean
+            rpc_connection:
+              type: boolean
+            telegram:
+              type: boolean
+
+    LivenessStatus:
+      type: object
+      properties:
+        alive:
+          type: boolean
+        timestamp:
+          type: string
+          format: date-time
+
+    ScannerStatus:
+      type: object
+      properties:
+        running:
+          type: boolean
+        stats:
+          type: object
+          properties:
+            received:
+              type: integer
+            processed:
+              type: integer
+            filtered:
+              type: integer
+            alerts_sent:
+              type: integer
+        workers:
+          type: integer
+        uptime:
+          type: number
+
+    TokenAnalysisRequest:
+      type: object
+      required:
+        - token_address
+      properties:
+        token_address:
+          type: string
+          description: Solana token address (base58)
+          example: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        pair_data:
+          type: object
+          description: Optional pair data from DexScreener
+
+    TokenAnalysisResult:
+      type: object
+      properties:
+        address:
+          type: string
+        symbol:
+          type: string
+        score:
+          type: number
+          minimum: 0
+          maximum: 100
+        risk_level:
+          type: string
+          enum: [low, medium, high, very_high]
+        should_trade:
+          type: boolean
+        liquidity_usd:
+          type: number
+        market_cap_usd:
+          type: number
+        holder_count:
+          type: integer
+        is_honeypot:
+          type: boolean
+        ml_prediction:
+          $ref: '#/components/schemas/MLPrediction'
+        mempool_signals:
+          type: array
+          items:
+            type: string
+
+    MLPrediction:
+      type: object
+      properties:
+        predicted_return:
+          type: number
+          description: Expected return percentage
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 100
+        risk_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        recommended_action:
+          type: string
+          enum: [BUY, HOLD, SELL, SKIP]
+        recommended_position:
+          type: number
+          description: Recommended position size in SOL
+
+    TradeRequest:
+      type: object
+      required:
+        - action
+        - token_address
+        - amount
+      properties:
+        action:
+          type: string
+          enum: [buy, sell]
+        token_address:
+          type: string
+        amount:
+          type: number
+          description: Amount in SOL (for buy) or tokens (for sell)
+        slippage_bps:
+          type: integer
+          default: 100
+          description: Slippage tolerance in basis points
+        priority_fee:
+          type: integer
+          default: 10000
+          description: Priority fee in lamports
+
+    TradeResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        signature:
+          type: string
+          description: Transaction signature
+        input_amount:
+          type: number
+        output_amount:
+          type: number
+        price_impact:
+          type: number
+        actual_slippage:
+          type: number
+        timestamp:
+          type: string
+          format: date-time
+        error:
+          type: string
+          description: Error message if failed
+
+    PredictionRequest:
+      type: object
+      required:
+        - token_address
+      properties:
+        token_address:
+          type: string
+        features:
+          type: object
+          description: Optional feature data for prediction
+
+    PredictionResult:
+      type: object
+      properties:
+        prediction:
+          $ref: '#/components/schemas/MLPrediction'
+        model_version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    Position:
+      type: object
+      properties:
+        token_address:
+          type: string
+        symbol:
+          type: string
+        entry_price:
+          type: number
+        current_price:
+          type: number
+        amount:
+          type: number
+        pnl:
+          type: number
+        pnl_percentage:
+          type: number
+        entry_time:
+          type: string
+          format: date-time
+        exit_levels:
+          type: array
+          items:
+            type: object
+            properties:
+              price:
+                type: number
+              percentage:
+                type: number
+
+    TradeHistory:
+      type: object
+      properties:
+        id:
+          type: integer
+        action:
+          type: string
+          enum: [buy, sell]
+        token_address:
+          type: string
+        symbol:
+          type: string
+        amount:
+          type: number
+        price:
+          type: number
+        total_value:
+          type: number
+        pnl:
+          type: number
+        status:
+          type: string
+          enum: [success, failed, pending]
+        signature:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        error:
+          type: string
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication (future implementation)
+
+security:
+  - ApiKeyAuth: []
