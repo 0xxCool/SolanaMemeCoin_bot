@@ -39,7 +39,7 @@ colorlog==6.8.0
 
 # Performance
 uvloop==0.19.0  # Schnellerer Event Loop (Linux/Mac)
-orjson==3.9.10  # Schnelleres JSON
+orjson==3.11.4  # Schnelleres JSON
 
 # Testing
 pytest==7.4.3
