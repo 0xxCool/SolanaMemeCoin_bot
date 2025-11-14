@@ -9,7 +9,7 @@ import sys
 import signal
 import logging
 from dotenv import load_dotenv
-from typing import Optional
+from typing import Optional, Any
 import time
 from telegram import Update
 
@@ -17,6 +17,16 @@ import telegram_bot
 from scanner import scanner
 from analyzer import analyzer
 from trader import trader
+
+# Import Health Check and Security modules
+try:
+    from health import start_health_server, health_check, record_trade
+    from security import get_security_manager
+    HEALTH_AVAILABLE = True
+except ImportError:
+    HEALTH_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("⚠️ Health check module not available")
 
 # Logging Setup (MUST be before any logger usage!)
 logging.basicConfig(
@@ -43,13 +53,27 @@ class TradingBot:
         self.telegram_app = None
         self.running = False
         self.start_time = time.time()
-        
+        self.health_runner: Optional[Any] = None
+        self.security_manager = None
+
     async def initialize(self):
         """Initialisiert alle Bot-Komponenten"""
         logger.info("🚀 Initialisiere Solana Trading Bot v2.0...")
-        
+
         # Lade Environment Variables
         load_dotenv()
+
+        # Initialize Security Manager
+        if HEALTH_AVAILABLE:
+            try:
+                self.security_manager = get_security_manager()
+                logger.info("✅ Security Manager initialisiert")
+                self.security_manager.audit_log(
+                    "BOT_START",
+                    {"version": "2.0", "timestamp": time.time()}
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Security Manager warning: {e}")
         
         # Validiere kritische Environment Variables
         required_vars = {
@@ -96,8 +120,18 @@ class TradingBot:
             except Exception as e:
                 logger.warning(f"⚠️ Integration initialization warning: {e}")
 
+        # Start Health Check Server
+        if HEALTH_AVAILABLE:
+            try:
+                self.health_runner = await start_health_server(port=8000)
+                health_check.update_component_status("database", "healthy")
+                logger.info("✅ Health Check Server gestartet auf Port 8000")
+            except Exception as e:
+                logger.warning(f"⚠️ Health Check Server warning: {e}")
+
         # Sende Start-Nachricht
         ai_status = "✅ Active" if INTEGRATION_AVAILABLE else "⚠️ Disabled"
+        health_status = "✅ Active" if HEALTH_AVAILABLE else "⚠️ Disabled"
         await telegram_bot.send_message(
             f"""
 *🚀 Bot Gestartet!*
@@ -107,23 +141,30 @@ Mode: High-Performance
 Scanner: WebSocket Streaming
 Trading: MEV Protected
 AI Engine: {ai_status}
+Health Checks: {health_status}
+Security: ✅ Active
 
 Verwende /start für das Hauptmenü.
+Health: http://localhost:8000/health
             """,
             important=True
         )
-        
+
         self.running = True
         logger.info("✅ Bot vollständig initialisiert")
         
     async def start_scanner(self):
         """Startet den WebSocket Scanner"""
         logger.info("🔄 Starte Scanner...")
-        
+
         try:
             self.scanner_task = asyncio.create_task(scanner.start())
             logger.info("✅ Scanner gestartet")
-            
+
+            # Update health status
+            if HEALTH_AVAILABLE:
+                health_check.update_component_status("scanner", "healthy")
+
             await telegram_bot.send_message(
                 "📡 *Scanner aktiviert*\n"
                 "Überwache Solana Blockchain in Echtzeit...",
@@ -131,6 +172,9 @@ Verwende /start für das Hauptmenü.
             )
         except Exception as e:
             logger.error(f"❌ Scanner Start Fehler: {e}")
+            if HEALTH_AVAILABLE:
+                health_check.update_component_status("scanner", "unhealthy")
+
             await telegram_bot.send_message(
                 f"❌ Scanner Fehler: {str(e)[:100]}",
                 important=True
@@ -197,11 +241,24 @@ Scanner Queue: {scanner.processing_queue.qsize()}
         """Sauberes Herunterfahren"""
         logger.info("🛑 Fahre Bot herunter...")
         self.running = False
-        
+
+        # Audit log shutdown
+        if HEALTH_AVAILABLE and self.security_manager:
+            try:
+                self.security_manager.audit_log(
+                    "BOT_SHUTDOWN",
+                    {
+                        "uptime_seconds": time.time() - self.start_time,
+                        "open_positions": len(trader.positions)
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Audit log warning: {e}")
+
         # Stoppe Scanner
         if self.scanner_task:
             await scanner.stop()
-            
+
         # Schließe alle Positionen wenn gewünscht
         if trader.positions:
             await telegram_bot.send_message(
@@ -209,18 +266,26 @@ Scanner Queue: {scanner.processing_queue.qsize()}
                 "Verwende /sell <address> um manuell zu schließen.",
                 important=True
             )
-            
+
         # Cleanup
         await analyzer.cleanup()
         await trader.cleanup()
-        
+
+        # Stop health check server
+        if HEALTH_AVAILABLE and self.health_runner:
+            try:
+                await self.health_runner.cleanup()
+                logger.info("✅ Health Check Server gestoppt")
+            except Exception as e:
+                logger.warning(f"⚠️ Health Check cleanup warning: {e}")
+
         # Sende Shutdown Message
         await telegram_bot.send_message(
             "🛑 *Bot gestoppt*\n"
             f"Laufzeit: {(time.time() - self.start_time) / 60:.0f} Minuten",
             important=True
         )
-        
+
         logger.info("✅ Bot sauber heruntergefahren")
 
 def handle_signal(signum, frame):

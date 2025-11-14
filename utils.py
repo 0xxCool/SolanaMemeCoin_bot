@@ -48,6 +48,12 @@ def format_sol_amount(lamports: int) -> str:
     sol = lamports / 1e9
     return f"{sol:.4f} SOL"
 
+def format_price(price: float, decimals: int = 4) -> str:
+    """
+    Formatiert Preis mit festen Dezimalstellen
+    """
+    return f"{price:.{decimals}f}"
+
 def format_time_ago(timestamp: float) -> str:
     """
     Formatiert Zeitstempel zu "vor X Minuten/Stunden"
@@ -76,6 +82,9 @@ def is_valid_solana_address(address: str) -> bool:
         return True
     except:
         return False
+
+# Aliases for compatibility with tests
+validate_token_address = is_valid_solana_address
 
 def is_honeypot_pattern(token_data: Dict) -> bool:
     """
@@ -196,13 +205,13 @@ def calculate_position_size(score: float, risk_tolerance: float = 1.0,
 # ASYNC HELPERS
 # ==============================================================================
 
-async def retry_async(func, max_retries: int = 3, 
+async def retry_async(func, max_retries: int = 3,
                      delay: float = 1.0, backoff: float = 2.0):
     """
     Retry Wrapper für Async Functions
     """
     last_exception = None
-    
+
     for attempt in range(max_retries):
         try:
             return await func()
@@ -214,8 +223,26 @@ async def retry_async(func, max_retries: int = 3,
                 await asyncio.sleep(wait_time)
             else:
                 logger.error(f"Alle {max_retries} Versuche fehlgeschlagen")
-                
+
     raise last_exception
+
+def retry_on_failure(max_attempts: int = 3, delay: float = 0.5):
+    """
+    Decorator for retry logic on async functions
+    """
+    def decorator(func):
+        async def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_attempts):
+                try:
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < max_attempts - 1:
+                        await asyncio.sleep(delay)
+            raise last_exception
+        return wrapper
+    return decorator
 
 async def run_with_timeout(coro, timeout: float, default=None):
     """
@@ -331,6 +358,14 @@ def calculate_slippage(current_price: float, entry_price: float) -> float:
     if entry_price == 0:
         return 0
     return abs((current_price - entry_price) / entry_price) * 100
+
+def calculate_percentage_change(old_value: float, new_value: float) -> float:
+    """
+    Berechnet prozentuale Änderung zwischen zwei Werten
+    """
+    if old_value == 0:
+        return 0.0
+    return ((new_value - old_value) / old_value) * 100.0
 
 def normalize_token_amount(amount: int, decimals: int) -> Decimal:
     """
