@@ -1,655 +1,235 @@
-Actionable comments posted: 14
+Actionable comments posted: 1
 
 Caution
 
 Some comments are outside the diff and can’t be posted inline due to platform limitations.
 
 ⚠️ Outside diff range comments (1)
-requirements.txt (1)
-13-13: Update spl-token to an available version (0.1.1–0.1.5).
+main.py (1)
+21-40: Avoid using logger before logging.basicConfig to keep logging configuration effective
 
-The version spl-token==0.6.0 does not exist on PyPI. Available versions are 0.1.1, 0.1.2, 0.1.3, 0.1.4, and 0.1.5. This causes installation failure and blocks CI/CD. Update requirements.txt line 13 to one of the available versions (e.g., spl-token==0.1.5).
+In the try/except ImportError block you call logger.warning before logging.basicConfig is invoked. When health/security import fails, that first log call will cause the logging module to create a default handler, and basicConfig later becomes a no-op. As a result, your intended file + stream configuration may never be applied in that scenario.
 
-🧹 Nitpick comments (17)
-mypy.ini (1)
-5-6: Consider stricter type checking for production hardening.
+To keep logging consistent regardless of whether the health module is available, initialize logging before any logger is used, or replace the early warning with a plain print and move the health/security import block below the basicConfig section.
 
-For enterprise-grade code targeting 95/100, the current settings are lenient:
-
-disallow_untyped_defs = False allows functions without type hints
-ignore_missing_imports = True can mask dependency or import issues
-Consider phasing in stricter settings (disallow_untyped_defs = True, selective import ignoring) to catch more type-related bugs early.
-
-.coveragerc (1)
-1-10: Consider more specific coverage source targeting.
-
-source = . covers the entire directory tree and relies on omit patterns to exclude unwanted files. For cleaner coverage metrics, consider explicitly listing source directories or packages (e.g., source = src,bot or specific module names).
-
-pytest.ini (1)
-8-8: Consider more specific coverage target.
-
---cov=. covers the entire directory tree. Consider targeting specific packages or source directories for cleaner coverage metrics, matching the recommendation for .coveragerc.
-
-.pylintrc (1)
-5-6: Reconsider docstring requirement disabling for production hardening.
-
-Disabling C0114, C0115, and C0116 suppresses checks for missing module, class, and function docstrings. For enterprise-grade code targeting 95/100 with comprehensive improvements, enforcing documentation standards would strengthen maintainability.
-
-Consider re-enabling these checks or selectively disabling them only for specific modules/paths.
-
-PRODUCTION_HARDENING.md (1)
-196-198: Format URLs as markdown links for better readability.
-
-The bare URLs should be formatted as proper markdown links for consistency and better presentation.
-
-Apply this diff to format the URLs:
-
--# View logs
--- Grafana: http://localhost:3000 (admin/admin)
--- Prometheus: http://localhost:9090
--- Health: http://localhost:8000/health
-+- Grafana: [http://localhost:3000](http://localhost:3000) (admin/admin)
-+- Prometheus: [http://localhost:9090](http://localhost:9090)
-+- Health: [http://localhost:8000/health](http://localhost:8000/health)
-health.py (2)
-126-131: Consider recording zero profit/loss trades.
-
-The current logic skips recording trades with exactly zero profit/loss (line 129). If tracking all trade outcomes in the histogram is important, consider removing this check.
-
-If you want to track all trades:
-
- def record_trade(action: str, profit_loss: float = 0.0):
-     """Record a trade in metrics"""
-     trades_total.labels(action=action).inc()
--    if profit_loss != 0:
--        trade_profit_loss.observe(profit_loss)
-+    trade_profit_loss.observe(profit_loss)
-29-29: Consider preemptive modernization to datetime.now(timezone.utc) for Python 3.12+ compatibility.
-
-datetime.utcnow() is deprecated as of Python 3.12 (currently on Python 3.11.2). While not yet a breaking change, migrating to datetime.now(timezone.utc) future-proofs the code. Update the import and the following 5 instances: lines 29, 42, 60, 88, and 98.
-
--from datetime import datetime
-+from datetime import datetime, timezone
-Then replace all datetime.utcnow() calls with datetime.now(timezone.utc).
-
-security.py (5)
-52-84: Use logging.exception for better error diagnostics.
-
-Replace logging.error with logging.exception (lines 66, 83) to automatically include exception tracebacks, which aids debugging.
-
-Apply this diff:
-
-         except Exception as e:
--            logger.error(f"Encryption error: {e}")
-+            logger.exception(f"Encryption error: {e}")
-             raise
-
-         except Exception as e:
--            logger.error(f"Decryption error: {e}")
-+            logger.exception(f"Decryption error: {e}")
-             raise
-127-147: Consider more comprehensive input sanitization.
-
-The current pattern (line 145) removes common injection characters but may miss others. Consider a more comprehensive approach or using a dedicated sanitization library.
-
-Example enhanced pattern:
-
--        # Remove potentially dangerous characters
--        text = re.sub(r'[<>"\';]', '', text)
-+        # Remove potentially dangerous characters for injection attacks
-+        text = re.sub(r'[<>"\';`\\$]', '', text)
-Or consider using a dedicated library like bleach for HTML sanitization or prepared statements for SQL.
-
-149-172: Use logging.exception for audit log failures.
-
-Replace logging.error with logging.exception (line 172) to capture full exception context when audit logging fails.
-
-Apply this diff:
-
-         except Exception as e:
--            logger.error(f"Failed to write audit log: {e}")
-+            logger.exception(f"Failed to write audit log: {e}")
-175-218: Address deprecated datetime and note single-instance limitation.
-
-Line 200 uses deprecated datetime.utcnow().timestamp(). Replace with datetime.now(timezone.utc).timestamp().
-
-This in-memory rate limiter won't work across multiple bot instances. For production with multiple replicas, consider using Redis or another shared storage.
-
-Apply this diff for the deprecation:
-
-+from datetime import datetime, timezone
--        now = datetime.utcnow().timestamp()
-+        now = datetime.now(timezone.utc).timestamp()
-86-107: Align Solana address validation with existing SDK patterns in codebase.
-
-The current regex-based validation works but is inconsistent with the approach already used elsewhere. utils.py (lines 74–77) validates Pubkey addresses using Pubkey.from_string() with exception handling, which is more robust and handles edge cases the regex alone may miss. Refactor validate_solana_address to use the same SDK approach for consistency and maintainability.
-
-tests/test_database.py (2)
-39-43: Refactor exception handling to be more specific.
-
-Catching blind Exception and using pytest.fail is not the recommended pattern. Let exceptions propagate naturally or use pytest.raises for expected failures.
-
-Based on static analysis hints
-
--        # This should not raise an exception
--        try:
--            await db.save_trade(**trade_data)
--        except Exception as e:
--            pytest.fail(f"save_trade raised exception: {e}")
-+        # This should not raise an exception
-+        await db.save_trade(**trade_data)
-If you expect potential failures, use:
-
-with pytest.raises(SpecificException):
-    await db.save_trade(**trade_data)
-53-58: Refactor exception handling to be more specific.
-
-Same issue as the previous test - let exceptions propagate naturally instead of catching and using pytest.fail.
-
-Based on static analysis hints
-
--        # This should return a list (empty or with trades)
--        try:
--            history = await db.get_trade_history(limit=10)
--            assert isinstance(history, list)
--        except Exception as e:
--            pytest.fail(f"get_trade_history raised exception: {e}")
-+        # This should return a list (empty or with trades)
-+        history = await db.get_trade_history(limit=10)
-+        assert isinstance(history, list)
-tests/test_utils.py (1)
-37-44: Use pythonic boolean checks instead of explicit comparisons.
-
-Comparing to True and False is not idiomatic Python and flagged by linters. Use direct boolean evaluation.
-
-Based on static analysis hints
-
-         # Valid Solana address (44 characters)
-         valid_address = "So11111111111111111111111111111111111111112"
--        assert validate_token_address(valid_address) == True
-+        assert validate_token_address(valid_address)
- 
-         # Invalid addresses
--        assert validate_token_address("invalid") == False
--        assert validate_token_address("") == False
--        assert validate_token_address(None) == False
-+        assert not validate_token_address("invalid")
-+        assert not validate_token_address("")
-+        assert not validate_token_address(None)
-tests/test_security.py (2)
-25-35: Use pythonic boolean checks, but tests are comprehensive.
-
-The test properly validates Solana addresses including edge cases (empty, None, too long), but should use pythonic boolean checks instead of explicit == True/False comparisons.
-
-Based on static analysis hints
-
-         # Valid address
-         valid_address = "So11111111111111111111111111111111111111112"
--        assert SecurityManager.validate_solana_address(valid_address) == True
-+        assert SecurityManager.validate_solana_address(valid_address)
- 
-         # Invalid addresses
--        assert SecurityManager.validate_solana_address("invalid") == False
--        assert SecurityManager.validate_solana_address("") == False
--        assert SecurityManager.validate_solana_address(None) == False
--        assert SecurityManager.validate_solana_address("a" * 100) == False
-+        assert not SecurityManager.validate_solana_address("invalid")
-+        assert not SecurityManager.validate_solana_address("")
-+        assert not SecurityManager.validate_solana_address(None)
-+        assert not SecurityManager.validate_solana_address("a" * 100)
-78-93: Rate limiter tests are thorough but could use pythonic boolean checks.
-
-The tests properly verify rate limiting behavior across multiple requests and different users. Consider using pythonic boolean evaluation.
-
-Based on static analysis hints
-
-         # First 3 requests should be allowed
--        assert limiter.is_allowed(user_id) == True
--        assert limiter.is_allowed(user_id) == True
--        assert limiter.is_allowed(user_id) == True
-+        assert limiter.is_allowed(user_id)
-+        assert limiter.is_allowed(user_id)
-+        assert limiter.is_allowed(user_id)
- 
-         # 4th request should be denied
--        assert limiter.is_allowed(user_id) == False
-+        assert not limiter.is_allowed(user_id)
- 
-         # Different user should be allowed
--        assert limiter.is_allowed("other_user") == True
-+        assert limiter.is_allowed("other_user")
-📜 Review details
-.bandit
-@@ -0,0 +1,7 @@
-[bandit]
-exclude_dirs = /tests,/venv,/windows,/android
-@coderabbitai
-coderabbitai bot
-4 minutes ago
-⚠️ Potential issue | 🟠 Major
-
-🧩 Analysis chain
-Fix exclude_dirs key and remove leading slashes in .bandit configuration.
-
-In INI format (.bandit files), the configuration key should be exclude (not exclude_dirs) with comma-separated relative paths. The INI format uses exclude = tests,path/to/file without leading slashes. Update line 2 to:
-
-exclude = tests,venv,windows,android
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-.bandit
-Comment on lines +4 to +7
-skips = B101
-
-[bandit.assert_used]
-skips = */test_*.py
-@coderabbitai
-coderabbitai bot
-4 minutes ago
-🛠️ Refactor suggestion | 🟠 Major
-
-Redundant assert_used configuration.
-
-Since B101 is already globally skipped on line 4, the [bandit.assert_used] section (lines 6-7) is redundant. Remove the nested section.
-
- tests = B201,B301,B302,B303,B304,B305,B306,B307,B308,B309,B310,B311,B312,B313,B314,B315,B316,B317,B318,B319,B320,B321,B323,B324,B325,B401,B402,B403,B404,B405,B406,B407,B408,B409,B410,B411,B412,B413,B501,B502,B503,B504,B505,B506,B507,B601,B602,B603,B604,B605,B606,B607,B608,B609,B610,B611,B701,B702,B703
- skips = B101
+-import logging
+-from dotenv import load_dotenv
+-from typing import Optional, Any
++import logging
++from dotenv import load_dotenv
++from typing import Optional, Any
+@@
+-# Import Health Check and Security modules
+-try:
+-    from health import start_health_server, health_check, record_trade
+-    from security import get_security_manager
+-    HEALTH_AVAILABLE = True
+-except ImportError:
+-    HEALTH_AVAILABLE = False
+-    logger = logging.getLogger(__name__)
+-    logger.warning("⚠️ Health check module not available")
 -
--[bandit.assert_used]
--skips = */test_*.py
-📝 Committable suggestion
-‼️ IMPORTANT
-Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
+-# Logging Setup (MUST be before any logger usage!)
+-logging.basicConfig(
++# Logging Setup (MUST be before any logger usage!)
++logging.basicConfig(
+     level=logging.INFO,
+@@
+ )
+-logger = logging.getLogger(__name__)
++logger = logging.getLogger(__name__)
++
++# Import Health Check and Security modules
++try:
++    from health import start_health_server, health_check, record_trade
++    from security import get_security_manager
++    HEALTH_AVAILABLE = True
++except ImportError:
++    HEALTH_AVAILABLE = False
++    logger.warning("⚠️ Health check module not available")
+🧹 Nitpick comments (10)
+utils.py (5)
+51-55: format_price implementation is fine but currently not exported
 
-Suggested change
-skips = B101
+The function does what it promises and matches typical test expectations, but it’s not present in __all__. If other modules or tests rely on from utils import *, they won’t see it.
 
-[bandit.assert_used]
-skips = */test_*.py
-tests = B201,B301,B302,B303,B304,B305,B306,B307,B308,B309,B310,B311,B312,B313,B314,B315,B316,B317,B318,B319,B320,B321,B323,B324,B325,B401,B402,B403,B404,B405,B406,B407,B408,B409,B410,B411,B412,B413,B501,B502,B503,B504,B505,B506,B507,B601,B602,B603,B604,B605,B606,B607,B608,B609,B610,B611,B701,B702,B703
-skips = B101
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-.github/workflows/ci.yml
-        python-version: ['3.10', '3.11']
+Consider adding it to __all__ for consistency with the other formatting helpers.
 
-    steps:
-    - uses: actions/checkout@v3
+ __all__ = [
+-    'format_number',
++    'format_number',
++    'format_price',
+86-87: Alias validate_token_address is useful; consider exporting it explicitly
+
+The alias to is_valid_solana_address should satisfy tests expecting validate_token_address. To make it discoverable and consistent with other public helpers, export it via __all__ as well.
+
+ __all__ = [
+@@
+-    'is_valid_solana_address',
++    'is_valid_solana_address',
++    'validate_token_address',
+362-368: calculate_percentage_change zero-handling is fine; consider exporting and clarifying semantics
+
+The implementation is straightforward and handles old_value == 0 by returning 0.0. That behavior is reasonable but slightly non-obvious (some domains might expect inf or a special marker).
+
+Add a short note to the docstring clarifying that when old_value is zero, the function returns 0.0.
+Add it to __all__ so it’s clearly part of the public API, in line with the PR objective.
+ def calculate_percentage_change(old_value: float, new_value: float) -> float:
+     """
+-    Berechnet prozentuale Änderung zwischen zwei Werten
++    Berechnet prozentuale Änderung zwischen zwei Werten.
++    Wenn old_value == 0, wird 0.0 zurückgegeben, um Division durch 0 zu vermeiden.
+@@
+ __all__ = [
+@@
+-    'calculate_slippage',
++    'calculate_slippage',
++    'calculate_percentage_change',
+229-245: Add functools.wraps and validate max_attempts parameter
+
+The decorator needs two improvements:
+
+Add @functools.wraps(func) on the wrapper to preserve the original function's metadata (__name__, __doc__, __wrapped__), which is the standard way to ensure decorators preserve wrapped function metadata.
+Validate that max_attempts >= 1 at decorator initialization; otherwise last_exception remains None and raise None occurs.
+Consider whether catching all Exception is intentional; a narrower set prevents hiding programming errors.
+-from typing import Dict, Any, List, Optional, Tuple
++from typing import Dict, Any, List, Optional, Tuple
+@@
+-from functools import lru_cache
++from functools import lru_cache, wraps
+@@
+ def retry_on_failure(max_attempts: int = 3, delay: float = 0.5):
+@@
++    if max_attempts <= 0:
++        raise ValueError("max_attempts must be >= 1")
++
+     def decorator(func):
+-        async def wrapper(*args, **kwargs):
++        @wraps(func)
++        async def wrapper(*args, **kwargs):
+             last_exception = None
+             for attempt in range(max_attempts):
+                 try:
+                     return await func(*args, **kwargs)
+                 except Exception as e:
+                     last_exception = e
+                     if attempt < max_attempts - 1:
+                         await asyncio.sleep(delay)
+             raise last_exception
++
+         return wrapper
+208-227: retry_async should narrow exception handling and validate input parameters
+
+The retry loop is correct and logs progressively longer waits. Two optional robustness improvements are recommended:
+
+Narrow except Exception to specific exception types (e.g., aiohttp.ClientError, asyncio.TimeoutError) to avoid masking unexpected bugs. This aligns with your codebase's pattern in run_with_timeout() which catches asyncio.TimeoutError specifically.
+Guard against max_retries <= 0 to prevent raising None from last_exception.
+main.py (5)
+56-77: Security manager is conditionally initialized; consider a separate availability flag
+
+Tying security_manager initialization strictly to HEALTH_AVAILABLE is workable if both modules always ship together, but it also means any ImportError in the health module disables security auditing entirely.
+
+If you intend security to be independently optional, consider a separate SECURITY_AVAILABLE flag and a separate import try for security. If health and security are tightly coupled by design, a short comment explaining that coupling would help future maintainers.
+
+134-149: Startup message correctly reflects AI and health status; consider making security status conditional
+
+The enhanced startup message includes AI and health status and advertises the health endpoint, which is helpful. The Security: ✅ Active line is always shown, even when the health/security modules are unavailable.
+
+To avoid confusing operators when HEALTH_AVAILABLE is false, you might want to make the security line conditional as well (e.g., mirror health_status).
+
+-        await telegram_bot.send_message(
++        security_status = "✅ Active" if self.security_manager else "⚠️ Disabled"
++        await telegram_bot.send_message(
+             f"""
+@@
+-Health Checks: {health_status}
+-Security: ✅ Active
++Health Checks: {health_status}
++Security: {security_status}
+@@
+-Health: http://localhost:8000/health
++Health: http://localhost:8000/health
+             """,
+244-257: Shutdown audit logging is valuable; watch for broad Exception masking
+
+Emitting a BOT_SHUTDOWN audit entry with uptime and open positions is a solid addition. The broad except Exception ensures shutdown isn’t blocked by audit logging failures, which may be acceptable here.
+
+If you want to distinguish between expected I/O problems and unexpected programming errors, you could narrow this except clause (e.g., to OSError) and let truly unexpected issues bubble up or at least be logged with logger.exception.
+
+274-280: Use logger.exception() for better traceback capture on cleanup errors
+
+The cleanup of self.health_runner via await self.health_runner.cleanup() is the documented way to stop an aiohttp server and perform graceful shutdown. To improve operational debugging, swap logger.warning for logger.exception to automatically capture the full traceback if cleanup fails:
+
+        if HEALTH_AVAILABLE and self.health_runner:
+            try:
+                await self.health_runner.cleanup()
+                logger.info("✅ Health Check Server gestoppt")
+            except Exception as e:
+-                logger.warning(f"⚠️ Health Check cleanup warning: {e}")
++                logger.exception("⚠️ Health Check cleanup warning")
+159-177: Use logging.exception() for better exception logging with automatic stack trace capture
+
+Inside an except block, logging.exception() is the preferred approach over logging.error() when a stack trace is needed. It is equivalent to logging.error(..., exc_info=True) and will record the full stack trace for the currently handled exception.
+
+Apply the suggested change:
+
+        except Exception as e:
+-            logger.error(f"❌ Scanner Start Fehler: {e}")
++            logger.exception("❌ Scanner Start Fehler")
+             if HEALTH_AVAILABLE:
+                 health_check.update_component_status("scanner", "unhealthy")
+📜 Review details
+.pre-commit-config.yaml
+Comment on lines +1 to +41
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/psf/black
+    rev: 23.12.0
+    hooks:
+      - id: black
+        language_version: python3.10
+        args: ['--line-length=120']
+
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: ['--profile', 'black', '--line-length', '120']
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.5
+    hooks:
+      - id: bandit
+        args: ['-c', '.bandit', '-r', '.']
+        exclude: ^tests/
+
+  - repo: local
+    hooks:
+      - id: pytest-check
+        name: pytest-check
+        entry: pytest
+        language: system
+        pass_filenames: false
+        always_run: true
+        args: ['--co', '-q']
 @coderabbitai
 coderabbitai bot
-4 minutes ago
-⚠️ Potential issue | 🟠 Major
-
-Update GitHub Actions to latest versions.
-
-Multiple actions are using outdated versions that may not be compatible with current GitHub Actions runners. Update to v4+ versions.
-
-Based on static analysis hints
-
-Apply these updates:
-
--    - uses: actions/checkout@v3
-+    - uses: actions/checkout@v4
-
--      uses: actions/setup-python@v4
-+      uses: actions/setup-python@v5
-
--      uses: actions/cache@v3
-+      uses: actions/cache@v4
-
--      uses: codecov/codecov-action@v3
-+      uses: codecov/codecov-action@v4
-
--      uses: actions/upload-artifact@v3
-+      uses: actions/upload-artifact@v4
-Also applies to: 21-21, 26-26, 43-43, 55-55, 58-58, 81-81, 84-84, 100-100, 115-115, 118-118
-
-🧰 Tools
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-.github/workflows/ci.yml
-Comment on lines +67 to +74
-    - name: Check code formatting with Black
-      run: black --check --diff .
-
-    - name: Lint with Pylint
-      run: pylint --rcfile=.pylintrc **/*.py || true
-
-    - name: Type check with MyPy
-      run: mypy . --ignore-missing-imports || true
-@coderabbitai
-coderabbitai bot
-4 minutes ago
-⚠️ Potential issue | 🟠 Major
-
-Code quality checks won't fail CI due to || true.
-
-The || true suffix prevents these checks from failing the build, which undermines their purpose. Consider removing || true to enforce code quality standards, or use continue-on-error: true at the step level if you want visibility without blocking.
-
-     - name: Check code formatting with Black
--      run: black --check --diff .
-+      run: black --check .
-
-     - name: Lint with Pylint
--      run: pylint --rcfile=.pylintrc **/*.py || true
-+      run: pylint --rcfile=.pylintrc **/*.py
-
-     - name: Type check with MyPy
--      run: mypy . --ignore-missing-imports || true
-+      run: mypy . --ignore-missing-imports
-Alternatively, if you want these as informational:
-
-     - name: Lint with Pylint
-       run: pylint --rcfile=.pylintrc **/*.py
-+      continue-on-error: true
-📝 Committable suggestion
-‼️ IMPORTANT
-Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
-
-Suggested change
-    - name: Check code formatting with Black
-      run: black --check --diff .
-    - name: Lint with Pylint
-      run: pylint --rcfile=.pylintrc **/*.py || true
-    - name: Type check with MyPy
-      run: mypy . --ignore-missing-imports || true
-    - name: Check code formatting with Black
-      run: black --check .
-    - name: Lint with Pylint
-      run: pylint --rcfile=.pylintrc **/*.py
-    - name: Type check with MyPy
-      run: mypy . --ignore-missing-imports
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-.github/workflows/ci.yml
-Comment on lines +93 to +97
-    - name: Run Bandit security scanner
-      run: bandit -r . -c .bandit -f json -o bandit-report.json || true
-
-    - name: Run Safety dependency scanner
-      run: safety check --json || true
-@coderabbitai
-coderabbitai bot
-4 minutes ago
-⚠️ Potential issue | 🔴 Critical
-
-Security scans won't fail CI due to || true.
-
-Security scans should block merges if vulnerabilities are found. The || true pattern prevents this.
-
-     - name: Run Bandit security scanner
--      run: bandit -r . -c .bandit -f json -o bandit-report.json || true
-+      run: bandit -r . -c .bandit -f json -o bandit-report.json
-
-     - name: Run Safety dependency scanner
--      run: safety check --json || true
-+      run: safety check --json
-📝 Committable suggestion
-‼️ IMPORTANT
-Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
-
-Suggested change
-    - name: Run Bandit security scanner
-      run: bandit -r . -c .bandit -f json -o bandit-report.json || true
-    - name: Run Safety dependency scanner
-      run: safety check --json || true
-    - name: Run Bandit security scanner
-      run: bandit -r . -c .bandit -f json -o bandit-report.json
-    - name: Run Safety dependency scanner
-      run: safety check --json
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-docker-compose.yml
-Comment on lines +22 to +27
-    healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-@coderabbitai
-coderabbitai bot
-4 minutes ago
-⚠️ Potential issue | 🟠 Major
-
-Inadequate healthcheck - doesn't verify bot functionality.
-
-The current healthcheck only verifies that Python can execute, not that the bot service is actually healthy or responding. This defeats the purpose of health monitoring.
-
-Consider replacing with an actual health endpoint check:
-
-     healthcheck:
--      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
-+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/health", "||", "exit", "1"]
-       interval: 30s
-       timeout: 10s
-       retries: 3
-       start_period: 40s
-Note: This assumes the bot exposes a health endpoint (health.py mentioned in PR objectives). Adjust the port and path accordingly.
-
-📝 Committable suggestion
-‼️ IMPORTANT
-Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
-
-Suggested change
-    healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/health", "||", "exit", "1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-docker-compose.yml
-Comment on lines +52 to +55
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-@coderabbitai
-coderabbitai bot
-4 minutes ago
-⚠️ Potential issue | 🟠 Major
-
-Change default Grafana credentials before production deployment.
-
-Using admin/admin as default credentials is a security risk. While acceptable for local development, ensure these are changed via environment variables in production.
-
-Consider documenting this in comments or providing environment variable overrides:
-
-     environment:
--      - GF_SECURITY_ADMIN_USER=admin
--      - GF_SECURITY_ADMIN_PASSWORD=admin
-+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
-       - GF_USERS_ALLOW_SIGN_UP=false
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-Dockerfile
-Comment on lines +45 to +46
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)"
-@coderabbitai
-coderabbitai bot
-4 minutes ago
-⚠️ Potential issue | 🟠 Major
-
-Healthcheck doesn't verify bot functionality.
-
-Similar to docker-compose.yml, this healthcheck only confirms Python can execute, not that the bot is operational. Consider using a proper health endpoint.
-
-Replace with:
-
--HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
--    CMD python -c "import sys; sys.exit(0)"
-+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()" || exit 1
-Adjust port/path based on your health endpoint configuration.
-
-Committable suggestion skipped: line range outside the PR's diff.
-
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-monitoring/grafana/datasources.yml
-Comment on lines +1 to +9
-apiVersion: 1
-
-datasources:
-  - name: Prometheus
-    type: prometheus
-    access: proxy
-    url: http://prometheus:9090
-    isDefault: true
-    editable: true
-@coderabbitai
-coderabbitai bot
-4 minutes ago
-⚠️ Potential issue | 🟡 Minor
-
-🧩 Analysis chain
-Convert file to Unix line endings (LF).
-
-Verification confirms the file currently uses Windows line endings (CRLF). Convert to Unix line endings (LF) to ensure compatibility with containerized environments.
-
-monitoring/grafana/datasources.yml (lines 1-9)
-🧰 Tools
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-pytest.ini
-    --cov-report=term-missing
-    --cov-report=xml
-    --cov-fail-under=70
-    --asyncio-mode=auto
-@coderabbitai
-coderabbitai bot
-4 minutes ago
-🛠️ Refactor suggestion | 🟠 Major
-
-Remove redundant asyncio_mode configuration.
-
-asyncio_mode = auto is set twice: in addopts (line 13) and as a standalone option (line 19). Remove one to avoid redundancy.
-
-     --cov-report=xml
-     --cov-fail-under=70
--    --asyncio-mode=auto
- markers =
-     unit: Unit tests
-Also applies to: 19-19
-
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-requirements.txt
-Comment on lines +47 to +48
-pytest-cov==4.1.0
-pytest-mock==3.12.0
-@coderabbitai
-coderabbitai bot
-4 minutes ago
-⚠️ Potential issue | 🟡 Minor
-
-🧩 Analysis chain
-Update test dependencies to current stable versions.
-
-The pinned versions are outdated. pytest-cov 7.0.0 and pytest-mock 3.15.1 are now available; update lines 47-48 from pytest-cov==4.1.0 and pytest-mock==3.12.0 respectively.
-
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-requirements.txt
-Comment on lines +57 to +58
-bandit==1.7.5
-safety==2.3.5
-@coderabbitai
-coderabbitai bot
-4 minutes ago
-⚠️ Potential issue | 🟡 Minor
-
-🧩 Analysis chain
-Update security tool versions to latest stable releases.
-
-bandit is currently at 1.8.6 (specified: 1.7.5) and safety is at 3.6.2 (specified: 2.3.5). Update both to their latest stable versions for improved security coverage.
-
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-security.py
-Comment on lines +39 to +50
-    def _init_cipher(self) -> Fernet:
-        """Initialize Fernet cipher with derived key"""
-        # Derive a key from the secret_key
-        kdf = PBKDF2(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=b'solana_bot_salt',  # In production, use random salt stored securely
-            iterations=100000,
-            backend=default_backend()
-        )
-        key = base64.urlsafe_b64encode(kdf.derive(self.secret_key.encode()))
-        return Fernet(key)
-@coderabbitai
-coderabbitai bot
-4 minutes ago
-⚠️ Potential issue | 🔴 Critical
-
-CRITICAL: Fixed salt defeats encryption security.
-
-Using a hardcoded salt (line 45) means the same SECRET_KEY always derives the same encryption key, which:
-
-Enables rainbow table attacks if the secret is weak
-Makes all encrypted data vulnerable if the key derivation is compromised
-Violates cryptographic best practices
-Recommended solutions:
-
-For application-level encryption (preferred): Generate a random salt once at application initialization and store it securely (e.g., in a configuration file or environment variable).
-
-For data-level encryption: Generate a unique salt per encrypted value and store it alongside the ciphertext.
-
-Apply this diff for solution 1:
-
-     def _init_cipher(self) -> Fernet:
-         """Initialize Fernet cipher with derived key"""
-+        # Get or generate salt
-+        salt_file = Path("logs/.salt")
-+        if salt_file.exists():
-+            with open(salt_file, 'rb') as f:
-+                salt = f.read()
-+        else:
-+            import secrets
-+            salt = secrets.token_bytes(16)
-+            salt_file.parent.mkdir(exist_ok=True)
-+            with open(salt_file, 'wb') as f:
-+                f.write(salt)
-+        
-         # Derive a key from the secret_key
-         kdf = PBKDF2(
-             algorithm=hashes.SHA256(),
-             length=32,
--            salt=b'solana_bot_salt',  # In production, use random salt stored securely
-+            salt=salt,
-             iterations=100000,
-             backend=default_backend()
-         )
-Committable suggestion skipped: line range outside the PR's diff.
-
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-tests/conftest.py
-Comment on lines +9 to +14
-@pytest.fixture(scope="session")
-def event_loop() -> Generator:
-    """Create an instance of the default event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-@coderabbitai
-coderabbitai bot
-4 minutes ago
+1 minute ago
 ⚠️ Potential issue | 🔴 Critical
 
 🧩 Analysis chain
-Remove the deprecated custom event_loop fixture from conftest.py.
+Missing .bandit configuration file will cause pre-commit hook to fail at runtime
 
-pytest-asyncio 0.21+ provides automatic event-loop management and deprecates custom event_loop overrides. The project uses pytest-asyncio 0.21.1, which automatically manages event loops per test. The session-scoped event_loop fixture (lines 9–14) is unnecessary and should be removed entirely. No test functions depend on this custom fixture.
+The .bandit file referenced in the Bandit hook (args: ['-c', '.bandit', '-r', '.']) does not exist in the repository. When the pre-commit hook runs, Bandit will fail because it cannot find the specified config file.
+
+Action required: Either create a .bandit config file in the repo root, or remove the -c .bandit argument from the Bandit hook args and rely on Bandit's default behavior (or specify an existing config location).
