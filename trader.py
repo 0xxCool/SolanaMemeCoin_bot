@@ -213,15 +213,12 @@ class SmartOrderRouter:
                 timeout=3.0
             )
         except asyncio.TimeoutError:
-            logger = logging.getLogger(__name__)
             logger.warning(f"Quote timeout from {dex.__class__.__name__}")
             return None
         except aiohttp.ClientError as e:
-            logger = logging.getLogger(__name__)
             logger.warning(f"Network error getting quote: {e}")
             return None
         except Exception as e:
-            logger = logging.getLogger(__name__)
             logger.error(f"Unexpected error in _get_quote_safe: {e}", exc_info=True)
             return None
             
