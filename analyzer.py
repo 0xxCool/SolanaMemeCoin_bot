@@ -25,6 +25,7 @@ import telegram_bot
 # Import new ML and Mempool modules
 import ml_predictor
 from mempool_monitor import EarlySignal
+from rate_limiter import APIRateLimiters
 
 # Globale Async Clients
 async_clients = []
@@ -112,8 +113,12 @@ class EnhancedAnalyzer:
             try:
                 client = AsyncClient(backup_url)
                 async_clients.append(client)
-            except:
-                pass
+            except (ConnectionError, TimeoutError) as e:
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Could not connect to backup RPC {backup_url}: {e}")
+            except Exception as e:
+                logger = logging.getLogger(__name__)
+                logger.error(f"Unexpected error connecting to {backup_url}: {e}", exc_info=True)
                 
         self.session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=5),
@@ -408,6 +413,8 @@ class EnhancedAnalyzer:
                                  
             # Zusätzlich von DexScreener API wenn nötig
             if metrics.volume_usd_5m == 0 and self.session:
+                # ✅ Rate limiting
+                await APIRateLimiters.dexscreener.acquire()
                 async with self.session.get(
                     DEXSCREENER_API.format(metrics.address),
                     ssl=False
@@ -426,7 +433,10 @@ class EnhancedAnalyzer:
         try:
             if not self.session:
                 return
-                
+
+            # ✅ Rate limiting for RugCheck
+            await APIRateLimiters.rugcheck.acquire()
+
             # RugCheck API
             async with self.session.get(
                 RUGCHECK_API_URL.format(metrics.address),
