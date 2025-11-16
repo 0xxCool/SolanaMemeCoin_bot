@@ -13,12 +13,18 @@ from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from decimal import Decimal
 import heapq
-from collections import defaultdict
+from collections import defaultdict, OrderedDict, deque
 import statistics
 from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
+from rate_limiter import APIRateLimiters
+from validators import Validators, ValidationError
+import logging
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 # Circuit Breaker Implementation
 class CircuitBreaker:
@@ -99,27 +105,67 @@ class SmartOrderRouter:
             'orca': OrcaDEX(),
             'serum': SerumDEX()
         }
-        self.quote_cache = {}
+        # ✅ Use OrderedDict with size limit
+        self.quote_cache = OrderedDict()
+        self.quote_cache_max_size = 1000
+        self.quote_cache_ttl = 5  # seconds
         self.execution_stats = defaultdict(lambda: {
             'success': 0,
             'failed': 0,
             'avg_slippage': []
         })
         
-    async def get_best_quote(self, 
-                            input_mint: str, 
-                            output_mint: str, 
+    def _get_cached_quote(self, cache_key: str) -> Optional[Dict]:
+        """Get cached quote with TTL check"""
+        if cache_key not in self.quote_cache:
+            return None
+
+        cached = self.quote_cache[cache_key]
+
+        # Check if expired
+        if time.time() - cached['timestamp'] > self.quote_cache_ttl:
+            # Remove expired entry
+            del self.quote_cache[cache_key]
+            return None
+
+        # Move to end (LRU)
+        self.quote_cache.move_to_end(cache_key)
+        return cached['quote']
+
+    def _cache_quote(self, cache_key: str, quote: Dict):
+        """Cache quote with size management"""
+        # Remove oldest if at capacity
+        if len(self.quote_cache) >= self.quote_cache_max_size:
+            self.quote_cache.popitem(last=False)  # Remove oldest (FIFO)
+
+        self.quote_cache[cache_key] = {
+            'quote': quote,
+            'timestamp': time.time()
+        }
+
+    async def get_best_quote(self,
+                            input_mint: str,
+                            output_mint: str,
                             amount: int,
                             slippage_bps: int = 100) -> Dict:
         """
         Holt beste Quote von allen DEXs
         """
-        # Check cache
+        # ✅ Validate inputs
+        try:
+            input_mint = Validators.validate_solana_address(input_mint)
+            output_mint = Validators.validate_solana_address(output_mint)
+            amount = int(Validators.validate_positive(amount, "amount"))
+            slippage_bps = Validators.validate_bps(slippage_bps, "slippage_bps")
+        except ValidationError as e:
+            logger.error(f"Invalid input to get_best_quote: {e}")
+            raise
+
+        # ✅ Check cache with new method
         cache_key = f"{input_mint}_{output_mint}_{amount}"
-        if cache_key in self.quote_cache:
-            cached = self.quote_cache[cache_key]
-            if time.time() - cached['timestamp'] < 5:  # 5 seconds cache
-                return cached['quote']
+        cached_quote = self._get_cached_quote(cache_key)
+        if cached_quote:
+            return cached_quote
                 
         # Get quotes from all DEXs in parallel
         quote_tasks = []
@@ -151,17 +197,14 @@ class SmartOrderRouter:
         
         if split_quote and self._is_split_beneficial(best_quote, split_quote):
             best_quote = split_quote
-            
-        # Cache result
-        self.quote_cache[cache_key] = {
-            'quote': best_quote,
-            'timestamp': time.time()
-        }
-        
+
+        # ✅ Cache result with new method
+        self._cache_quote(cache_key, best_quote)
+
         return best_quote
         
-    async def _get_quote_safe(self, dex, input_mint: str, 
-                             output_mint: str, amount: int, 
+    async def _get_quote_safe(self, dex, input_mint: str,
+                             output_mint: str, amount: int,
                              slippage_bps: int) -> Optional[Dict]:
         """Get quote with error handling"""
         try:
@@ -169,7 +212,17 @@ class SmartOrderRouter:
                 dex.get_quote(input_mint, output_mint, amount, slippage_bps),
                 timeout=3.0
             )
-        except:
+        except asyncio.TimeoutError:
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Quote timeout from {dex.__class__.__name__}")
+            return None
+        except aiohttp.ClientError as e:
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Network error getting quote: {e}")
+            return None
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Unexpected error in _get_quote_safe: {e}", exc_info=True)
             return None
             
     def _analyze_quotes(self, quotes: List[Dict]) -> Dict:
@@ -521,6 +574,9 @@ class JupiterDEX:
                        amount: int, slippage_bps: int) -> Dict:
         """Get quote from Jupiter"""
         try:
+            # ✅ Rate limiting for Jupiter
+            await APIRateLimiters.jupiter.acquire()
+
             session = await self._get_session()
             url = f"{self.api_url}/quote"
             params = {

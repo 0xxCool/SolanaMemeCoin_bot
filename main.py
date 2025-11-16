@@ -8,6 +8,19 @@ import os
 import sys
 import signal
 import logging
+
+# ✅ Configure logging FIRST (before any imports that use it)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Now safe to import everything else
 from dotenv import load_dotenv
 from typing import Optional, Any
 import time
@@ -25,19 +38,7 @@ try:
     HEALTH_AVAILABLE = True
 except ImportError:
     HEALTH_AVAILABLE = False
-    logger = logging.getLogger(__name__)
-    logger.warning("⚠️ Health check module not available")
-
-# Logging Setup (MUST be before any logger usage!)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+    logger.warning("⚠️ Health check module not available")  # ✅ Now safe!
 
 # Import Integration Layer (AI + Auto-Trading)
 try:
