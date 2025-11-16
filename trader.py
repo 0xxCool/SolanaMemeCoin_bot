@@ -13,7 +13,7 @@ from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from decimal import Decimal
 import heapq
-from collections import defaultdict, OrderedDict
+from collections import defaultdict, OrderedDict, deque
 import statistics
 from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
