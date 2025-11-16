@@ -6,6 +6,7 @@ Ersetzt das alte analyzer.py mit fortgeschrittenen Features
 import asyncio
 import aiohttp
 import time
+import logging
 from typing import Dict, Any, Tuple, Optional, List
 from dataclasses import dataclass
 from solders.pubkey import Pubkey
@@ -26,6 +27,9 @@ import telegram_bot
 import ml_predictor
 from mempool_monitor import EarlySignal
 from rate_limiter import APIRateLimiters
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 # Globale Async Clients
 async_clients = []
@@ -114,11 +118,12 @@ class EnhancedAnalyzer:
                 client = AsyncClient(backup_url)
                 async_clients.append(client)
             except (ConnectionError, TimeoutError) as e:
-                logger = logging.getLogger(__name__)
                 logger.warning(f"Could not connect to backup RPC {backup_url}: {e}")
             except Exception as e:
-                logger = logging.getLogger(__name__)
-                logger.error(f"Unexpected error connecting to {backup_url}: {e}", exc_info=True)
+                logger.error(
+                    f"Unexpected error connecting to {backup_url}: {e}",
+                    exc_info=True
+                )
                 
         self.session = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=5),
@@ -171,7 +176,7 @@ class EnhancedAnalyzer:
             # Log errors but continue
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
-                    print(f"Task {i} error: {result}")
+                    logger.error(f"Task {i} error: {result}", exc_info=result)
             
             # Stufe 2: Erweiterte Filter
             if not await self._pass_advanced_filters(metrics):
@@ -183,23 +188,23 @@ class EnhancedAnalyzer:
             
             # ML-basierte Entscheidung
             if metrics.ml_recommended_action == "SKIP" and metrics.ml_confidence > 0.7:
-                print(f"ML empfiehlt SKIP für {metrics.symbol} (Confidence: {metrics.ml_confidence:.1%})")
+                logger.info(f"ML empfiehlt SKIP für {metrics.symbol} (Confidence: {metrics.ml_confidence:.1%})")
                 return None
                 
             # Nur Token mit gutem finalem Score
             if final_score < scanner_filters.MIN_SCORE:
-                print(f"Token {metrics.symbol} Final Score zu niedrig: {final_score:.1f}")
+                logger.debug(f"Token {metrics.symbol} Final Score zu niedrig: {final_score:.1f}")
                 return None
                 
             # Pattern-basierte Warnung
             if "RUG_PATTERN" in metrics.pattern_signals:
-                print(f"⚠️ Rug Pattern erkannt für {metrics.symbol}")
+                logger.warning(f"⚠️ Rug Pattern erkannt für {metrics.symbol}")
                 metrics.risk_level = "critical"
                 
             return metrics
-            
+
         except Exception as e:
-            print(f"Enhanced Analyse Fehler: {e}")
+            logger.error(f"Enhanced Analyse Fehler: {e}", exc_info=True)
             return None
             
     async def _pass_basic_filters(self, metrics: EnhancedTokenMetrics) -> bool:
@@ -271,9 +276,9 @@ class EnhancedAnalyzer:
             
             # Buy Pressure
             metrics.buy_pressure = await self._calculate_buy_pressure(metrics.address)
-            
+
         except Exception as e:
-            print(f"Advanced Metrics Error: {e}")
+            logger.error(f"Advanced Metrics Error: {e}", exc_info=True)
             
     async def _fetch_mempool_data(self, metrics: EnhancedTokenMetrics):
         """Holt Daten aus dem Mempool Monitor"""
@@ -294,9 +299,9 @@ class EnhancedAnalyzer:
                 # Whale activity
                 if metrics.pending_large_buys > 2 or metrics.pending_large_sells > 2:
                     metrics.whale_activity_detected = True
-                    
+
         except Exception as e:
-            print(f"Mempool Data Error: {e}")
+            logger.error(f"Mempool Data Error: {e}", exc_info=True)
             
     async def _run_ml_prediction(self, metrics: EnhancedTokenMetrics, pair_data: Dict):
         """Führt ML Prediction aus"""
@@ -331,9 +336,9 @@ class EnhancedAnalyzer:
             metrics.ml_recommended_position = prediction.recommended_position_size
             metrics.ml_predicted_peak_time = prediction.predicted_peak_time
             metrics.ml_exit_indicators = prediction.exit_indicators
-            
+
         except Exception as e:
-            print(f"ML Prediction Error: {e}")
+            logger.error(f"ML Prediction Error: {e}", exc_info=True)
             # Set defaults on error
             metrics.ml_confidence = 0.1
             metrics.ml_recommended_action = "SKIP"
@@ -399,9 +404,9 @@ class EnhancedAnalyzer:
             
             # Holder Count (Approximation)
             metrics.holder_count = len([acc for acc in largest_res.value if int(acc.amount) > 0])
-            
+
         except Exception as e:
-            print(f"Holder-Metrik Fehler: {e}")
+            logger.error(f"Holder-Metrik Fehler: {e}", exc_info=True)
             
     async def _fetch_volume_metrics(self, metrics: EnhancedTokenMetrics, pair_data: Dict):
         """Holt Volumen und Transaktions-Metriken"""
@@ -424,9 +429,9 @@ class EnhancedAnalyzer:
                         if data.get('pairs'):
                             pair = data['pairs'][0]
                             metrics.volume_usd_5m = float(pair.get('volume', {}).get('m5', 0))
-                            
+
         except Exception as e:
-            print(f"Volume-Metrik Fehler: {e}")
+            logger.error(f"Volume-Metrik Fehler: {e}", exc_info=True)
             
     async def _fetch_security_check(self, metrics: EnhancedTokenMetrics):
         """Führt Security Checks durch"""
@@ -453,9 +458,9 @@ class EnhancedAnalyzer:
                     # LP Burn/Lock Check
                     if data.get('lpLocked') or data.get('lpBurned'):
                         metrics.lp_burned = True
-                        
+
         except Exception as e:
-            print(f"Security Check Fehler: {e}")
+            logger.error(f"Security Check Fehler: {e}", exc_info=True)
             
     async def _fetch_price_metrics(self, metrics: EnhancedTokenMetrics, pair_data: Dict):
         """Berechnet Preis-Metriken und Momentum"""
@@ -472,9 +477,9 @@ class EnhancedAnalyzer:
                 if supply_res.value:
                     total_supply = int(supply_res.value.amount) / (10 ** 9)  # Annahme: 9 Decimals
                     metrics.market_cap_usd = price_usd * total_supply
-                    
+
         except Exception as e:
-            print(f"Price-Metrik Fehler: {e}")
+            logger.error(f"Price-Metrik Fehler: {e}", exc_info=True)
             
     async def cleanup(self):
         """Cleanup Ressourcen"""
