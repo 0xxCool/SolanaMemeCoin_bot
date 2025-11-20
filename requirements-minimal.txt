@@ -21,12 +21,6 @@ scipy==1.13.1
 joblib==1.4.2
 aiofiles==24.1.0
 
-# Deep Learning
-torch==2.5.1
-torchvision==0.20.1
-tensorflow==2.18.0
-keras==3.7.0
-
 # Database (für Trade History)
 aiosqlite==0.20.0
 sqlalchemy==2.0.36
