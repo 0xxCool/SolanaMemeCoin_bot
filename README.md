@@ -266,31 +266,30 @@ solana --version
 
 ## ⚙️ Konfiguration
 
-### Schritt 1: Burner Wallet erstellen
+## Schritt 1: Burner-Wallet erstellen
 
-**WICHTIG:** Verwende NIEMALS deine Haupt-Wallet! Erstelle eine neue Wallet nur für den Bot!
+### Option A – Phantom (einfach)
+1. Phantom-Extension öffnen → „Create New Wallet“  
+2. Namen vergeben (z. B. „Trading-Bot-Burner“)  
+3. Einstellungen → „Show Secret Recovery Phrase“ oder „Export Private Key“ kopieren  
+4. In `.env` einfügen (siehe Schritt 3)
 
-#### Option A: Mit Phantom Wallet (Einfach)
-
-1. Öffne Phantom Wallet
-2. Erstelle einen neuen Account: "Create New Wallet"
-3. Name: `Trading Bot Burner`
-4. Exportiere den Private Key:
-   - Einstellungen → Show Secret Recovery Phrase
-   - Oder: Einstellungen → Export Private Key
-5. **WICHTIG:** Speichere den Key sicher!
-
-#### Option B: Mit Solana CLI (Fortgeschritten)
-
+### Option B – Solana CLI (fortgeschritten, aber ohne Phantom)
 ```bash
-# Erstelle neue Wallet
+# 1. Neues Keypair erzeugen
 solana-keygen new --outfile ~/.config/solana/trading-bot.json
 
-# Zeige Public Key (Adresse)
+# 2. Public-Key (Empfangsadresse) anzeigen
 solana-keygen pubkey ~/.config/solana/trading-bot.json
 
-# Exportiere Private Key für .env
-cat ~/.config/solana/trading-bot.json
+# 3. Private Key als Base58 exportieren (für .env)
+python3 -c "
+import base58, json, sys
+with open(sys.argv[1]) as f:
+    bytes_64 = json.load(f)          # 64 B [secret+public]
+secret   = bytes(bytes_64[:32])      # erste 32 B = secret
+print(base58.b58encode(secret).decode())
+" ~/.config/solana/trading-bot.json
 ```
 
 #### Option C: Mit Python Script
@@ -298,46 +297,29 @@ cat ~/.config/solana/trading-bot.json
 ```python
 # generate_wallet.py
 from solders.keypair import Keypair
-import base58
+import base58, os, json
 
-# Generiere neues Keypair
 keypair = Keypair()
+public  = str(keypair.pubkey())
+secret  = base58.b58encode(bytes(keypair)[:32]).decode()   # nur Secret
 
-# Zeige Public Key (Adresse)
-print(f"Public Key: {keypair.pubkey()}")
+print("Public Key :", public)
+print("Private Key:", secret)
 
-# Zeige Private Key (für .env)
-private_key_bytes = bytes(keypair)
-private_key_base58 = base58.b58encode(private_key_bytes).decode()
-print(f"Private Key (Base58): {private_key_base58}")
-
-# WICHTIG: Speichere diese Werte sicher!
-# Sende SOL an die Public Key Adresse
+# optional: direkt als JSON sichern
+os.makedirs(".keys", exist_ok=True)
+with open(".keys/burner.json", "w") as f:
+    json.dump(list(bytes(keypair)), f)
 ```
+Public Key : 7GqprSYhNzeEnqJ3rMLC6cFqrFWxYVWpcCH5GvK4Fd3Z
+Private Key: 5J3xjTJJpMJ8zK4V6bPSmPDdGYgW5c6U5yGM8t6cK3Vn8XQqYkHd9V2zYy2GzZ3
 
 ### Schritt 2: Telegram Bot erstellen
 
-1. **Öffne Telegram** und suche nach `@BotFather`
-
-2. **Erstelle neuen Bot:**
-   ```
-   /newbot
-   ```
-
-3. **Folge den Anweisungen:**
-   - Bot Name: `My Solana Trading Bot`
-   - Bot Username: `my_solana_trading_bot` (muss eindeutig sein!)
-
-4. **Kopiere den Token:**
-   ```
-   Use this token to access the HTTP API:
-   1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
-   ```
-
-5. **Hole deine Chat ID:**
-   - Suche nach `@userinfobot` auf Telegram
-   - Sende `/start`
-   - Kopiere deine Chat ID (z.B. `123456789`)
+Telegram → @BotFather
+/newbot → Namen + Username (muss eindeutig sein)
+Token kopieren (Format 1234567890:ABCdefGHI…)
+@userinfobot → /start → eigene Chat-ID notieren
 
 ### Schritt 3: .env Datei erstellen
 
@@ -394,22 +376,15 @@ RPC_URL="https://api.mainnet-beta.solana.com"
 ### Schritt 4: SOL auf Burner Wallet senden
 
 ```bash
-# Überprüfe ob Wallet korrekt geladen wird
 python3 -c "
 from solders.keypair import Keypair
-import base58
-import os
+import base58, os
 from dotenv import load_dotenv
-
 load_dotenv()
-pk = os.getenv('PRIVATE_KEY')
-keypair = Keypair.from_bytes(base58.b58decode(pk))
-print(f'Wallet Adresse: {keypair.pubkey()}')
+secret = base58.b58decode(os.getenv('PRIVATE_KEY'))
+kp     = Keypair.from_bytes(secret + secret)   # solders braucht 64 B
+print('Wallet-Adresse:', kp.pubkey())
 "
-
-# Sende 1-2 SOL an diese Adresse
-# Nutze Phantom, Solflare, oder:
-solana transfer WALLET_ADRESSE 1 --allow-unfunded-recipient
 ```
 
 ### Schritt 5: Konfiguration testen
@@ -432,7 +407,37 @@ else:
     print(f'RPC: {os.getenv(\"RPC_URL\")[:30]}...')
 "
 ```
+An diese Adresse sendest du 1-2 SOL (Mainnet) – z. B. aus Phantom, Solflare oder CLI:
 
+```bash
+solana transfer <ADRESSE> 2 --allow-unfunded-recipient
+```
+
+```bash
+python3 -c "
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+req = ['PRIVATE_KEY','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID','RPC_URL']
+miss = [v for v in req if not os.getenv(v)]
+if miss:
+    print('❌ Fehlende Keys:', miss)
+else:
+    print('✅ Alle Environment-Variablen gesetzt')
+    print('RPC :', os.getenv('RPC_URL')[:35] + '…')
+"
+```
+Ergebnis:
+✅ Alle Environment-Variablen gesetzt → Setup komplett, Bot kann starten!
+
+Zusammenfassung
+Base58-Secret-Key → .env (PRIVATE_KEY)
+Telegram Token + Chat-ID → .env
+RPC-URL → .env
+Wallet mit 1-2 SOL laden
+Test-Skript erfolgreich durchlaufen
+Danach kannst du python main.py (oder dein Bot-Script) starten – 100 % funktionsbereit.
 ---
 
 ## 🎮 Erste Schritte
@@ -1836,4 +1841,5 @@ Wenn dieser Bot dir geholfen hat, hinterlasse einen ⭐ auf GitHub!
 [⬆ Back to Top](#-solana-ultra-high-performance-trading-bot-v20-enhanced)
 
 </div>
+
 
