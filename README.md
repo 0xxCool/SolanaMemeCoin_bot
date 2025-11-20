@@ -217,7 +217,41 @@ pip list | grep -E "solana|telegram|numpy"
 
 ```bash
 # Linux/Mac:
-sh -c "$(curl -sSfL https://release.solana.com/stable/install)"
+# Solana-CLI manuell installieren (Ubuntu/WSL) – kompletter Ablauf
+
+Falls der offizielle Installer  
+`sh -c "$(curl -sSfL https://release.solana.com/stable/install)"`  
+mit  
+`curl: (35) error:0A000126:SSL routines::unexpected eof while reading`  
+scheitert, liegt das meist an einer blockierten TLS-Verbindung (Cloudflare-Edge, Proxy, DPI).  
+Der Work-around: Binary direkt von GitHub holen und lokal entpacken.
+
+## 1. Vorbereitung
+```bash
+# Proxy-Umgebung checken (sollte leer sein)
+env | grep -i proxy
+
+# In Projektordner wechseln (Beispiel)
+cd ~/SolanaMemeCoin_bot
+
+wget https://github.com/solana-labs/solana/releases/download/v1.17.9/solana-release-x86_64-unknown-linux-gnu.tar.bz2
+
+sudo apt update
+sudo apt install bzip2 lbzip2
+
+tar xf solana-release-x86_64-unknown-linux-gnu.tar.bz2
+# Ordner »solana-release« wird erzeugt
+
+./solana-release/bin/solana --version
+# → solana-cli 1.17.9 (src:daf37308; feat:1428472342, client:SolanaLabs)
+
+export PATH="$PWD/solana-release/bin:$PATH"
+
+echo "export PATH=\"$HOME/SolanaMemeCoin_bot/solana-release/bin:\$PATH\"" >> ~/.bashrc
+source ~/.bashrc
+
+solana config set --url https://api.mainnet-beta.solana.com
+solana-keygen new --outfile ~/.config/solana/id.json
 
 # Windows:
 # Download von https://github.com/solana-labs/solana/releases
@@ -1802,3 +1836,4 @@ Wenn dieser Bot dir geholfen hat, hinterlasse einen ⭐ auf GitHub!
 [⬆ Back to Top](#-solana-ultra-high-performance-trading-bot-v20-enhanced)
 
 </div>
+
