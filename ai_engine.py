@@ -5,6 +5,7 @@ State-of-the-art ML for maximum trading performance
 """
 import os
 import asyncio
+import logging
 import numpy as np
 import pandas as pd
 import torch
@@ -22,6 +23,9 @@ import aiofiles
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 import joblib
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # NEURAL NETWORK ARCHITECTURES
@@ -337,7 +341,8 @@ class AdvancedAIEngine:
 
         # Initialization flags
         self._initialized = False
-        self._initializing = False
+        self._init_event = asyncio.Event()
+        self._init_event.set()  # Initially ready to initialize
 
         # Training scheduler
         self.last_training = time.time()
@@ -348,18 +353,19 @@ class AdvancedAIEngine:
         if self._initialized:
             return
 
-        if self._initializing:
-            # Warte, bis die Initialisierung abgeschlossen ist
-            while self._initializing:
-                await asyncio.sleep(0.1)
+        # Wait for permission to initialize (only one caller proceeds)
+        await self._init_event.wait()
+
+        # Double-check after acquiring the event
+        if self._initialized:
             return
 
-        self._initializing = True
+        self._init_event.clear()  # Block other callers
         try:
             await self.load_models()
             self._initialized = True
         finally:
-            self._initializing = False
+            self._init_event.set()  # Unblock waiting callers
 
     async def load_models(self):
         """Load pre-trained models"""
@@ -578,8 +584,8 @@ class AdvancedAIEngine:
                 if hasattr(model, 'predict'):
                     pred = model.predict(features.reshape(1, -1))[0]
                     predictions.append(pred)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Ensemble model {name} prediction failed: {e}")
 
         if predictions:
             avg_prediction = np.mean(predictions)

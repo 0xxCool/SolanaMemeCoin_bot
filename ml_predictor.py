@@ -5,6 +5,7 @@ Verwendet Online Learning für kontinuierliche Verbesserung
 """
 import numpy as np
 import asyncio
+import logging
 import pickle
 import os
 from typing import Dict, List, Tuple, Optional
@@ -20,6 +21,9 @@ from sklearn.model_selection import train_test_split
 import joblib
 import pandas as pd
 from scipy import stats
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 @dataclass
 class TokenFeatures:
@@ -142,25 +146,27 @@ class MLPredictor:
 
         # Initialization flag
         self._initialized = False
-        self._initializing = False
+        self._init_event = asyncio.Event()
+        self._init_event.set()  # Initially ready to initialize
         
     async def ensure_initialized(self):
         """Stellt sicher, dass die Initialisierung durchgeführt wurde"""
         if self._initialized:
             return
 
-        if self._initializing:
-            # Warte, bis die Initialisierung abgeschlossen ist
-            while self._initializing:
-                await asyncio.sleep(0.1)
+        # Wait for permission to initialize (only one caller proceeds)
+        await self._init_event.wait()
+
+        # Double-check after acquiring the event
+        if self._initialized:
             return
 
-        self._initializing = True
+        self._init_event.clear()  # Block other callers
         try:
             await self._initialize()
             self._initialized = True
         finally:
-            self._initializing = False
+            self._init_event.set()  # Unblock waiting callers
 
     async def _initialize(self):
         """Lädt oder trainiert Models"""
@@ -318,8 +324,8 @@ class MLPredictor:
                 proba = self.models['returns'].predict_proba([[predicted_return]])
                 model_confidence = np.max(proba)
                 confidence = (confidence + model_confidence) / 2
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Could not calculate model confidence: {e}")
                 
         return np.clip(confidence, 0, 1)
         
