@@ -125,6 +125,7 @@ class HighPerformanceScanner:
 
             except websockets.exceptions.InvalidStatusCode as e:
                 # Spezielle Behandlung für HTTP-Status-Fehler (wie 502)
+                self._websocket = None  # Clear stale reference
                 if e.status_code == 502:
                     consecutive_502_errors += 1
                     self.endpoint_failures[current_url] = self.endpoint_failures.get(current_url, 0) + 1
@@ -151,10 +152,12 @@ class HighPerformanceScanner:
                     logger.exception("❌ WebSocket HTTP %s Fehler", e.status_code)
 
             except websockets.exceptions.ConnectionClosed as e:
+                self._websocket = None  # Clear stale reference
                 logger.warning(f"⚠️ WebSocket Verbindung geschlossen: {e}")
 
             except OSError:
                 # Netzwerk-Fehler (Connection refused, timeout, etc.)
+                self._websocket = None  # Clear stale reference
                 logger.exception("❌ Netzwerk-Fehler bei WebSocket-Verbindung")
                 self.endpoint_failures[current_url] = self.endpoint_failures.get(current_url, 0) + 1
 
@@ -164,6 +167,7 @@ class HighPerformanceScanner:
                     self._rotate_to_next_endpoint()
 
             except Exception as e:
+                self._websocket = None  # Clear stale reference
                 logger.error(f"❌ Unerwarteter WebSocket-Fehler: {e}", exc_info=True)
 
             if not self.running:
@@ -399,8 +403,12 @@ class HighPerformanceScanner:
         # Step 1b: Close WebSocket to stop receiving new messages
         if self._websocket and not self._websocket.closed:
             logger.info("Closing WebSocket connection...")
-            await self._websocket.close()
-            self._websocket = None
+            try:
+                await self._websocket.close()
+            except Exception as e:
+                logger.warning(f"Error closing WebSocket: {e}")
+            finally:
+                self._websocket = None
 
         # Step 2: Wait for workers to finish current tasks
         logger.info(f"Waiting for {len(self.workers)} workers to finish (timeout: {timeout}s)...")
