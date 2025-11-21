@@ -40,6 +40,7 @@ class HighPerformanceScanner:
         self.processing_queue = asyncio.Queue(maxsize=1000)
         self.priority_queue: List[PriorityPair] = []
         self.workers: List[asyncio.Task] = []
+        self.message_tasks: Set[asyncio.Task] = set()  # Track background tasks
         self.stats = {
             'received': 0,
             'processed': 0,
@@ -115,7 +116,9 @@ class HighPerformanceScanner:
 
                     # Message Processing Loop
                     async for message in websocket:
-                        asyncio.create_task(self._handle_message(message))
+                        task = asyncio.create_task(self._handle_message(message))
+                        self.message_tasks.add(task)
+                        task.add_done_callback(self.message_tasks.discard)
 
             except websockets.exceptions.InvalidStatusCode as e:
                 # Spezielle Behandlung für HTTP-Status-Fehler (wie 502)
@@ -123,7 +126,7 @@ class HighPerformanceScanner:
                     consecutive_502_errors += 1
                     self.endpoint_failures[current_url] = self.endpoint_failures.get(current_url, 0) + 1
 
-                    logger.error(
+                    logger.exception(
                         f"❌ WebSocket 502 Bad Gateway Fehler bei Endpoint #{self.current_wss_endpoint_index + 1} "
                         f"(Versuch {consecutive_502_errors}/{max_502_before_rotation}): {current_url}"
                     )
@@ -138,14 +141,14 @@ class HighPerformanceScanner:
                         consecutive_502_errors = 0
                         backoff = 1  # Schneller Retry bei Endpoint-Wechsel
                 else:
-                    logger.error(f"❌ WebSocket HTTP {e.status_code} Fehler: {e}")
+                    logger.exception(f"❌ WebSocket HTTP {e.status_code} Fehler: {e}")
 
             except websockets.exceptions.ConnectionClosed as e:
                 logger.warning(f"⚠️ WebSocket Verbindung geschlossen: {e}")
 
             except OSError as e:
                 # Netzwerk-Fehler (Connection refused, timeout, etc.)
-                logger.error(f"❌ Netzwerk-Fehler bei WebSocket-Verbindung: {e}")
+                logger.exception(f"❌ Netzwerk-Fehler bei WebSocket-Verbindung: {e}")
                 self.endpoint_failures[current_url] = self.endpoint_failures.get(current_url, 0) + 1
 
                 # Bei wiederholten Netzwerk-Fehlern Endpoint wechseln

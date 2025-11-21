@@ -245,3 +245,34 @@ ENABLE_SNIPING_MODE = True  # Ultra-schneller Modus für neue Listings
 ENABLE_ARBITRAGE_DETECTION = False  # Cross-DEX Arbitrage
 ENABLE_COPY_TRADING = False  # Kopiere erfolgreiche Wallets
 ENABLE_AI_ANALYSIS = False  # KI-basierte Mustererkennung
+
+# ==============================================================================
+# UNIFIED CONFIG CLASS (für Tests und Legacy-Kompatibilität)
+# ==============================================================================
+class Config:
+    """
+    Unified configuration class that aggregates all dataclass instances
+    and provides backward-compatible attribute access for tests.
+    """
+    def __init__(self):
+        # Aggregate dataclass instances
+        self.scanner_filters = scanner_filters
+        self.trading_config = trading_config
+        self.profit_strategy = profit_strategy
+        self.scoring_weights = scoring_weights
+        self.monitoring_config = monitoring_config
+
+        # Backward-compatible attributes for tests
+        self.RPC_ENDPOINT = RPC_URL
+        self.MIN_LIQUIDITY = scanner_filters.MIN_LIQUIDITY_USD
+        self.MIN_VOLUME_24H = scanner_filters.MIN_VOLUME_USD
+        self.MIN_HOLDERS = scanner_filters.MIN_HOLDER_COUNT
+        self.MIN_CONFIDENCE_SCORE = scanner_filters.MIN_SCORE
+
+        # Additional commonly used attributes
+        self.DEXSCREENER_WSS_URLS = DEXSCREENER_WSS_URLS
+        self.DEXSCREENER_WSS_URL = DEXSCREENER_WSS_URL
+        self.DEXSCREENER_WSS_HEADERS = DEXSCREENER_WSS_HEADERS
+        self.BACKUP_RPC_URLS = BACKUP_RPC_URLS
+        self.TOKEN_BLACKLIST = TOKEN_BLACKLIST
+        self.TRUSTED_DEPLOYERS = TRUSTED_DEPLOYERS
