@@ -40,7 +40,8 @@ EOF
 
 get_state() {
     local key=$1
-    local value=$(grep "^${key}=" "$STATE_FILE" 2>/dev/null | cut -d'=' -f2)
+    local value
+    value=$(grep "^${key}=" "$STATE_FILE" 2>/dev/null | cut -d'=' -f2)
     echo "${value:-0}"
 }
 
