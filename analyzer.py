@@ -500,11 +500,25 @@ class EnhancedAnalyzer:
             logger.error(f"Price-Metrik Fehler: {e}", exc_info=True)
             
     async def cleanup(self):
-        """Cleanup Ressourcen"""
-        if self.session:
-            await self.session.close()
+        """Cleanup Ressourcen - Idempotent (kann mehrmals sicher aufgerufen werden)"""
+        if self.session and not self.session.closed:
+            try:
+                await self.session.close()
+            except Exception as e:
+                logger.warning(f"Session close warning: {e}")
+            finally:
+                self.session = None
+
+        # Close all RPC clients
+        global async_clients
         for client in async_clients:
-            await client.close()
+            try:
+                await client.close()
+            except Exception as e:
+                logger.warning(f"RPC client close warning: {e}")
+        async_clients = []  # Clear the list
+
+        self._initialized = False
 
 class PatternDetector:
     """Erkennt komplexe Trading Patterns"""
