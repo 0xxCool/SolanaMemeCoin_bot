@@ -341,8 +341,7 @@ class AdvancedAIEngine:
 
         # Initialization flags
         self._initialized = False
-        self._init_event = asyncio.Event()
-        self._init_event.set()  # Initially ready to initialize
+        self._init_lock = asyncio.Lock()
 
         # Training scheduler
         self.last_training = time.time()
@@ -353,19 +352,11 @@ class AdvancedAIEngine:
         if self._initialized:
             return
 
-        # Wait for permission to initialize (only one caller proceeds)
-        await self._init_event.wait()
-
-        # Double-check after acquiring the event
-        if self._initialized:
-            return
-
-        self._init_event.clear()  # Block other callers
-        try:
+        async with self._init_lock:
+            if self._initialized:
+                return
             await self.load_models()
             self._initialized = True
-        finally:
-            self._init_event.set()  # Unblock waiting callers
 
     async def load_models(self):
         """Load pre-trained models"""

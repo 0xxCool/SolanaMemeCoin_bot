@@ -106,27 +106,18 @@ class EnhancedAnalyzer:
         self.pattern_detector = PatternDetector()
         self.social_analyzer = SocialSentimentAnalyzer()
         self._initialized = False
-        self._init_event = asyncio.Event()
-        self._init_event.set()  # Initially ready to initialize
+        self._init_lock = asyncio.Lock()
 
     async def ensure_initialized(self):
         """Stellt sicher, dass die Initialisierung durchgeführt wurde"""
         if self._initialized:
             return
 
-        # Wait for permission to initialize (only one caller proceeds)
-        await self._init_event.wait()
-
-        # Double-check after acquiring the event
-        if self._initialized:
-            return
-
-        self._init_event.clear()  # Block other callers
-        try:
+        async with self._init_lock:
+            if self._initialized:
+                return
             await self._initialize()
             self._initialized = True
-        finally:
-            self._init_event.set()  # Unblock waiting callers
 
     async def _initialize(self):
         """Initialisiert Async Clients und Session"""
