@@ -16,18 +16,18 @@ def event_loop() -> Generator:
 
 @pytest.fixture
 def mock_config():
-    """Mock configuration for testing"""
+    """Mock configuration for testing (all values must be strings for os.environ)"""
     return {
         "RPC_ENDPOINT": "https://api.mainnet-beta.solana.com",
         "WALLET_ADDRESS": "test_wallet_address",
         "PRIVATE_KEY": "test_private_key",
         "TELEGRAM_BOT_TOKEN": "test_token",
         "TELEGRAM_CHAT_ID": "test_chat_id",
-        "MIN_LIQUIDITY": 5000,
-        "MIN_VOLUME_24H": 10000,
-        "MIN_HOLDERS": 50,
-        "MAX_MARKET_CAP": 100000,
-        "MIN_CONFIDENCE_SCORE": 60,
+        "MIN_LIQUIDITY": "5000",
+        "MIN_VOLUME_24H": "10000",
+        "MIN_HOLDERS": "50",
+        "MAX_MARKET_CAP": "100000",
+        "MIN_CONFIDENCE_SCORE": "60",
     }
 
 

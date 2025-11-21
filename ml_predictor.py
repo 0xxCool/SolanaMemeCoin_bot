@@ -139,7 +139,7 @@ class MLPredictor:
 
         # Online Learning Parameters
         self.retrain_threshold = 100  # Retrain after N new samples
-        self.new_samples = []
+        self.new_samples = deque(maxlen=500)  # Prevent memory leak, keep last 500 samples
 
         # Feature Importance Tracking
         self.feature_importance = {}
@@ -530,7 +530,7 @@ class MLPredictor:
             await self.save_models()
             
             # Clear new samples
-            self.new_samples = []
+            self.new_samples.clear()
             
             print("✅ Models erfolgreich aktualisiert")
             

@@ -51,6 +51,7 @@ class AutoTrader:
         self.active_monitors = {}  # token_address -> monitor_task
         self.daily_auto_buy_spent = 0
         self.daily_reset_time = time.time()
+        self.daily_limit_lock = asyncio.Lock()  # ✅ Lock to prevent race conditions
 
         # Performance tracking
         self.stats = {
@@ -68,15 +69,17 @@ class AutoTrader:
         if not self.settings.auto_buy_enabled:
             return None
 
-        # Reset daily limit
-        if time.time() - self.daily_reset_time > 86400:
-            self.daily_auto_buy_spent = 0
-            self.daily_reset_time = time.time()
+        # ✅ Thread-safe daily limit check and reset
+        async with self.daily_limit_lock:
+            # Reset daily limit
+            if time.time() - self.daily_reset_time > 86400:
+                self.daily_auto_buy_spent = 0
+                self.daily_reset_time = time.time()
 
-        # Check daily limit
-        if self.daily_auto_buy_spent >= self.settings.auto_buy_daily_limit_sol:
-            logger.info("Daily auto-buy limit reached")
-            return None
+            # Check daily limit
+            if self.daily_auto_buy_spent >= self.settings.auto_buy_daily_limit_sol:
+                logger.info("Daily auto-buy limit reached")
+                return None
 
         try:
             # Get AI recommendation
@@ -88,6 +91,12 @@ class AutoTrader:
             if should_buy:
                 amount_sol = await self._calculate_buy_amount(ai_prediction)
 
+                # ✅ Check limit again before executing (thread-safe)
+                async with self.daily_limit_lock:
+                    if self.daily_auto_buy_spent + amount_sol > self.settings.auto_buy_daily_limit_sol:
+                        logger.info("Daily limit would be exceeded, skipping buy")
+                        return None
+
                 # Execute trade
                 tx_sig = await self._execute_auto_buy(
                     token_data,
@@ -97,7 +106,9 @@ class AutoTrader:
 
                 if tx_sig:
                     self.stats['auto_buys'] += 1
-                    self.daily_auto_buy_spent += amount_sol
+                    # ✅ Thread-safe increment
+                    async with self.daily_limit_lock:
+                        self.daily_auto_buy_spent += amount_sol
 
                     # Start monitoring position
                     await self._start_position_monitor(token_data, ai_prediction)

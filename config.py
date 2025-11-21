@@ -20,6 +20,7 @@ DEXSCREENER_WSS_URLS = [
 DEXSCREENER_WSS_URL = DEXSCREENER_WSS_URLS[0]
 
 # WebSocket Headers für Cloudflare-Schutz (erweitert für bessere Bot-Detection-Umgehung)
+# ✅ Removed Sec-WebSocket-* headers - they are ignored by websockets library and auto-generated
 DEXSCREENER_WSS_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Accept": "*/*",
@@ -27,8 +28,6 @@ DEXSCREENER_WSS_HEADERS = {
     "Accept-Encoding": "gzip, deflate, br",
     "Origin": "https://dexscreener.com",
     "Referer": "https://dexscreener.com/",
-    "Sec-WebSocket-Version": "13",
-    "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
     "Cache-Control": "no-cache",
     "Pragma": "no-cache",
 }

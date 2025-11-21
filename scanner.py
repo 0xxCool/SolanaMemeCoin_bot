@@ -18,7 +18,8 @@ from config import (
     DEXSCREENER_WSS_HEADERS,
     ENABLE_SNIPING_MODE
 )
-from analyzer import analyzer
+# ✅ Removed top-level analyzer import to prevent circular dependency
+# analyzer is imported locally where needed
 import telegram_bot
 
 # ✅ Setup logging
@@ -37,6 +38,7 @@ class HighPerformanceScanner:
         self.processed_pairs: Dict[str, float] = {}  # address -> timestamp
         self.processed_pairs_max_size = 10000  # Keep last 10k
         self.processed_pairs_max_age = 3600   # 1 hour
+        self.processed_pairs_lock = asyncio.Lock()  # ✅ Lock to prevent race conditions
         self.processing_queue = asyncio.Queue(maxsize=1000)
         self.priority_queue: List[PriorityPair] = []
         self.workers: List[asyncio.Task] = []
@@ -85,6 +87,7 @@ class HighPerformanceScanner:
             })
 
         backoff = 1
+        max_backoff = 30  # ✅ Dynamic max backoff (30s default, 60s for 403 rate limits)
         consecutive_502_errors = 0
         consecutive_403_errors = 0
         max_502_before_rotation = 3  # Nach 3 502-Fehlern zum nächsten Endpoint wechseln
@@ -116,6 +119,7 @@ class HighPerformanceScanner:
 
                     # Reset auf Erfolg
                     backoff = 1
+                    max_backoff = 30  # ✅ Reset to default
                     consecutive_502_errors = 0
                     consecutive_403_errors = 0
                     self.endpoint_failures[current_url] = 0
@@ -174,8 +178,10 @@ class HighPerformanceScanner:
                         self._rotate_to_next_endpoint()
                         consecutive_403_errors = 0
                         backoff = 10  # Längerer Backoff bei 403 (Rate Limiting)
+                        max_backoff = 60  # ✅ Allow up to 60s backoff for 403 rate limits
                     else:
                         # Erhöhe Backoff bei 403-Fehlern
+                        max_backoff = 60  # ✅ Allow up to 60s backoff for 403 rate limits
                         backoff = min(backoff * 3, 60)  # Aggressiverer Backoff, max 60 Sekunden
                 else:
                     logger.exception("❌ WebSocket HTTP %s Fehler", e.status_code)
@@ -202,11 +208,11 @@ class HighPerformanceScanner:
             if not self.running:
                 break
 
-            # Exponential Backoff für Reconnect
-            wait_time = min(backoff, 30)
+            # Exponential Backoff für Reconnect (✅ Use dynamic max_backoff)
+            wait_time = min(backoff, max_backoff)
             logger.info(f"🔄 Reconnect in {wait_time} Sekunden...")
             await asyncio.sleep(wait_time)
-            backoff = min(backoff * 2, 30)  # Max 30 Sekunden
+            backoff = min(backoff * 2, max_backoff)  # ✅ Respect dynamic max
 
     def _rotate_to_next_endpoint(self):
         """Wechselt zum nächsten verfügbaren WebSocket-Endpoint"""
@@ -250,18 +256,19 @@ class HighPerformanceScanner:
         except Exception as e:
             logger.error(f"Message Handler Fehler: {e}", exc_info=True)
             
-    def _add_processed_pair(self, pair_address: str):
-        """Add pair to processed cache with size/age management"""
-        current_time = time.time()
+    async def _add_processed_pair(self, pair_address: str):
+        """Add pair to processed cache with size/age management (thread-safe)"""
+        async with self.processed_pairs_lock:
+            current_time = time.time()
 
-        # Clean old entries if needed
-        if len(self.processed_pairs) >= self.processed_pairs_max_size:
-            self._cleanup_old_pairs(current_time)
+            # Clean old entries if needed
+            if len(self.processed_pairs) >= self.processed_pairs_max_size:
+                self._cleanup_old_pairs_unsafe(current_time)
 
-        self.processed_pairs[pair_address] = current_time
+            self.processed_pairs[pair_address] = current_time
 
-    def _cleanup_old_pairs(self, current_time: float):
-        """Remove old entries to prevent memory leak"""
+    def _cleanup_old_pairs_unsafe(self, current_time: float):
+        """Remove old entries to prevent memory leak (must be called with lock held)"""
         # Remove entries older than max_age
         to_remove = [
             addr for addr, ts in self.processed_pairs.items()
@@ -281,11 +288,10 @@ class HighPerformanceScanner:
             for addr, _ in sorted_pairs[:remove_count]:
                 del self.processed_pairs[addr]
 
-    def _is_already_processed(self, pair_address: str) -> bool:
-        """Check if pair was already processed"""
-        if pair_address in self.processed_pairs:
-            return True
-        return False
+    async def _is_already_processed(self, pair_address: str) -> bool:
+        """Check if pair was already processed (thread-safe)"""
+        async with self.processed_pairs_lock:
+            return pair_address in self.processed_pairs
 
     async def _handle_new_pair(self, pair_data: Dict):
         """Verarbeitet neue Pair Events"""
@@ -293,7 +299,7 @@ class HighPerformanceScanner:
             return
 
         pair_address = pair_data.get('pairAddress', '')
-        if not pair_address or self._is_already_processed(pair_address):  # ✅ Use new method
+        if not pair_address or await self._is_already_processed(pair_address):  # ✅ Thread-safe check
             return
 
         # Skip SOL selbst
@@ -301,7 +307,7 @@ class HighPerformanceScanner:
         if base_token == "So11111111111111111111111111111111111111112":
             return
 
-        self._add_processed_pair(pair_address)  # ✅ Use new method
+        await self._add_processed_pair(pair_address)  # ✅ Thread-safe add
         
         # Schnelle Vor-Priorisierung basierend auf Liquidität
         liquidity = float(pair_data.get('liquidity', {}).get('usd', 0))
@@ -387,7 +393,8 @@ class HighPerformanceScanner:
                         from integration import process_token
                         await process_token(priority_pair.pair_data)
                     except ImportError:
-                        # Fallback to traditional analyzer (✅ Fixed method name)
+                        # Fallback to traditional analyzer (✅ Local import to avoid circular dependency)
+                        from analyzer import analyzer
                         await analyzer.analyze_token(priority_pair.pair_data)
 
                     process_time = time.time() - start_time
@@ -475,13 +482,17 @@ class HighPerformanceScanner:
         if remaining > 0:
             logger.warning(f"⚠️ {remaining} items left in queue (not processed)")
 
-        # Step 6: Cleanup
+        # Step 6: Cleanup (✅ Local import to avoid circular dependency)
+        from analyzer import analyzer
         await analyzer.cleanup()
 
         logger.info("✅ Scanner stopped cleanly")
 
 # Globale Scanner Instanz
 scanner = HighPerformanceScanner()
+
+# ✅ Legacy alias for backward compatibility (tests/old code import Scanner)
+Scanner = HighPerformanceScanner
 
 async def run_scanner_stream():
     """Entry Point für Main"""
