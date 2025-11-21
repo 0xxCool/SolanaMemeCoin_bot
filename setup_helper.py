@@ -87,9 +87,9 @@ def validate_wallet(private_key: str) -> Tuple[bool, str]:
 
         # Try to create keypair
         try:
-            # For solders, we need the full 64 bytes (secret + public)
-            # We only have secret, so derive public
-            keypair = Keypair.from_bytes(secret_bytes + secret_bytes)  # Temporary
+            # solders Keypair.from_bytes() accepts the 32-byte secret key
+            # and derives the public key automatically
+            keypair = Keypair.from_bytes(secret_bytes)
             return True, f"Valid wallet: {str(keypair.pubkey())}"
         except Exception as e:
             return False, f"Cannot create keypair: {e}"

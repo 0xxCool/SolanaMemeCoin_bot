@@ -355,7 +355,7 @@ async def test_database():
 
         # Test query
         try:
-            trades = await db.get_recent_trades(limit=10)
+            trades = await db.get_trade_history(limit=10)
             success = isinstance(trades, list)
             print_test("Query recent trades", success, f"Found: {len(trades)} trades")
             results['query'] = success
