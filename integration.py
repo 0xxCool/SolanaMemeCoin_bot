@@ -202,12 +202,16 @@ class IntegrationManager:
         except Exception as e:
             logger.error(f"Trade outcome recording error: {e}")
 
-    def get_integration_stats(self) -> Dict:
+    async def get_integration_stats(self) -> Dict:
         """Get integration statistics"""
         stats = self.stats.copy()
 
         if self.ai_enabled:
-            stats['ai_stats'] = asyncio.run(get_ai_stats())
+            try:
+                stats['ai_stats'] = await get_ai_stats()
+            except Exception as e:
+                logger.error(f"Failed to get AI stats: {e}")
+                stats['ai_stats'] = {}
 
         if self.auto_trader_enabled:
             stats['auto_trader_stats'] = auto_trader.get_stats()
@@ -238,6 +242,6 @@ async def record_trade(token_address: str, action: str, entry_price: float,
     )
 
 
-def get_stats() -> Dict:
+async def get_stats() -> Dict:
     """Get integration statistics"""
-    return integration_manager.get_integration_stats()
+    return await integration_manager.get_integration_stats()

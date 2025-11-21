@@ -31,18 +31,52 @@ class SecurityManager:
             logger.warning("No SECRET_KEY set! Using default (INSECURE for production)")
             self.secret_key = "default_insecure_key_change_me"
 
+        self.salt_path = Path("config/encryption.salt")
+        self.salt = self._load_or_generate_salt()
         self.cipher = self._init_cipher()
         self.audit_log_path = Path("logs/audit.log")
         self.audit_log_path.parent.mkdir(exist_ok=True)
 
+    def _load_or_generate_salt(self) -> bytes:
+        """Load existing salt or generate a new one"""
+        if self.salt_path.exists():
+            try:
+                with open(self.salt_path, 'rb') as f:
+                    salt = f.read()
+                if len(salt) == 32:
+                    logger.info("✅ Loaded existing encryption salt")
+                    return salt
+                else:
+                    logger.warning("⚠️ Invalid salt file, regenerating...")
+            except (IOError, OSError) as e:
+                logger.warning(f"⚠️ Failed to load salt: {e}, generating new one")
+
+        # Generate new random salt
+        salt = os.urandom(32)
+        try:
+            self.salt_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.salt_path, 'wb') as f:
+                f.write(salt)
+            # Set restrictive permissions (owner read/write only)
+            os.chmod(self.salt_path, 0o600)
+            logger.info("✅ Generated new unique encryption salt")
+        except (IOError, OSError, PermissionError) as e:
+            logger.exception(f"❌ Failed to save salt: {e}")
+            raise RuntimeError(
+                f"Cannot initialize encryption: failed to save salt file to {self.salt_path}. "
+                "This is required to prevent data loss on restart."
+            ) from e
+
+        return salt
+
     def _init_cipher(self) -> Fernet:
         """Initialize Fernet cipher with derived key"""
-        # Derive a key from the secret_key
+        # Derive a key from the secret_key using unique salt
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
-            salt=b'solana_bot_salt',  # In production, use random salt stored securely
-            iterations=100000
+            salt=self.salt,  # Unique per installation
+            iterations=480000  # Increased from 100k for better security
         )
         key = base64.urlsafe_b64encode(kdf.derive(self.secret_key.encode()))
         return Fernet(key)

@@ -112,9 +112,20 @@ class HighPerformanceScanner:
     async def _handle_message(self, message: str):
         """Verarbeitet eingehende WebSocket Messages"""
         try:
+            # Validate JSON size
+            if len(message) > 100000:  # 100KB limit
+                logger.warning("Oversized WebSocket message dropped")
+                return
+
             data = json.loads(message)
+
+            # Validate it's a dict
+            if not isinstance(data, dict):
+                logger.warning("Invalid WebSocket message format")
+                return
+
             self.stats['received'] += 1
-            
+
             # Verschiedene Event Types
             event_type = data.get('type', '')
             

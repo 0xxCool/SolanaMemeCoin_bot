@@ -51,6 +51,7 @@ except ImportError:
 class TradingBot:
     def __init__(self):
         self.scanner_task: Optional[asyncio.Task] = None
+        self.periodic_task: Optional[asyncio.Task] = None
         self.telegram_app = None
         self.telegram_initialized = False  # Track if telegram was fully initialized
         self.running = False
@@ -215,7 +216,7 @@ Health: http://localhost:8000/health
             )
 
             # Run periodic tasks in background
-            asyncio.create_task(self.periodic_tasks())
+            self.periodic_task = asyncio.create_task(self.periodic_tasks())
 
             # Keep the bot running
             while self.running:
@@ -276,6 +277,17 @@ Scanner Queue: {scanner.processing_queue.qsize()}
                 )
             except Exception as e:
                 logger.warning(f"⚠️ Audit log warning: {e}")
+
+        # Stoppe periodic task
+        if self.periodic_task and not self.periodic_task.done():
+            logger.info("🔄 Stoppe periodic tasks...")
+            self.periodic_task.cancel()
+            try:
+                await self.periodic_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"⚠️ Periodic task cleanup warning: {e}")
 
         # Sende Shutdown Message (vor dem Stoppen des Telegram Bots)
         try:

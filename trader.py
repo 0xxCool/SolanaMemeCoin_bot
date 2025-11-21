@@ -583,7 +583,7 @@ class JupiterDEX:
                 'slippageBps': slippage_bps
             }
 
-            async with session.get(url, params=params, ssl=False) as response:
+            async with session.get(url, params=params) as response:
                 if response.status == 200:
                     data = await response.json()
                     return {
@@ -623,7 +623,7 @@ class JupiterDEX:
             }
 
             # Get swap transaction from Jupiter
-            async with session.post(swap_url, json=swap_payload, ssl=False) as response:
+            async with session.post(swap_url, json=swap_payload) as response:
                 if response.status != 200:
                     error_text = await response.text()
                     print(f"❌ Jupiter swap API error ({response.status}): {error_text}")
@@ -710,7 +710,7 @@ class RaydiumDEX:
                 'slippage': slippage_bps / 10000  # Convert bps to decimal
             }
 
-            async with session.get(url, params=params, ssl=False) as response:
+            async with session.get(url, params=params) as response:
                 if response.status == 200:
                     data = await response.json()
                     return {
@@ -769,7 +769,7 @@ class OrcaDEX:
                 'slippage': slippage_bps / 10000
             }
 
-            async with session.get(url, params=params, ssl=False) as response:
+            async with session.get(url, params=params) as response:
                 if response.status == 200:
                     data = await response.json()
                     return {
@@ -945,11 +945,18 @@ class Trader:
                 try:
                     # Try JSON array format [1,2,3,...]
                     import json
+                    # Validate JSON size
+                    if len(private_key) > 1000:
+                        raise ValueError("Private key too long")
                     key_array = json.loads(private_key)
+                    # Validate it's a list
+                    if not isinstance(key_array, list):
+                        raise ValueError("Expected JSON array")
                     self.keypair = Keypair.from_bytes(bytes(key_array))
                     print(f"✅ Loaded wallet from JSON array private key")
                 except Exception as e2:
-                    raise ValueError(f"❌ Failed to decode PRIVATE_KEY. Try Base58 or JSON array format.\nBase58 error: {e1}\nJSON error: {e2}")
+                    # DON'T log the actual keys!
+                    raise ValueError(f"❌ Failed to decode PRIVATE_KEY. Try Base58 or JSON array format.\nError: Invalid key format")
         else:
             self.keypair = keypair
 
