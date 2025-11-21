@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.backends import default_backend
 import base64
 
@@ -39,7 +39,7 @@ class SecurityManager:
     def _init_cipher(self) -> Fernet:
         """Initialize Fernet cipher with derived key"""
         # Derive a key from the secret_key
-        kdf = PBKDF2(
+        kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=b'solana_bot_salt',  # In production, use random salt stored securely
