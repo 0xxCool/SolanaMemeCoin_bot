@@ -136,7 +136,7 @@ print_info() {
 
 ask_skip() {
     local step_name=$1
-    echo -e "${CYAN}This step is already completed.${NC}"
+    echo -e "${CYAN}Step '$step_name' is already completed.${NC}"
     read -p "Skip this step? (Y/n) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Nn]$ ]]; then
