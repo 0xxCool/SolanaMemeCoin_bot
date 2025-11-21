@@ -326,7 +326,7 @@ class MempoolMonitor:
                 # Known Whirlpool init discriminator
                 if discriminator == bytes([0x95, 0xbb, 0x81, 0xfa, 0xaf, 0x23, 0xba, 0x59]):
                     return True
-        except:
+        except (AttributeError, IndexError, TypeError):
             pass
         return False
         
@@ -337,7 +337,7 @@ class MempoolMonitor:
         try:
             # Token mint instruction is usually 1 byte with value 0
             return len(instruction.data) == 1 and instruction.data[0] == 0
-        except:
+        except (AttributeError, IndexError, TypeError):
             return False
             
     async def _analyze_jupiter_swap(self, instruction: Any, 
@@ -358,9 +358,9 @@ class MempoolMonitor:
                     return TransactionType.LARGE_BUY
                 else:
                     return TransactionType.LARGE_SELL
-        except:
+        except (AttributeError, IndexError, TypeError, KeyError):
             pass
-            
+
         return TransactionType.UNKNOWN
         
     async def _extract_token_mint(self, program_id: str, 
@@ -375,15 +375,15 @@ class MempoolMonitor:
                 # Raydium: Token mint at index 8 and 9
                 if len(instruction.accounts) > 9:
                     return str(account_keys[instruction.accounts[8]])
-                    
+
             elif program_id == ORCA_WHIRLPOOL:
                 # Orca: Different position
                 if len(instruction.accounts) > 2:
                     return str(account_keys[instruction.accounts[2]])
-                    
-        except:
+
+        except (AttributeError, IndexError, TypeError, KeyError):
             pass
-            
+
         return None
         
     async def _calculate_sol_amount(self, tx: VersionedTransaction) -> float:
@@ -394,7 +394,7 @@ class MempoolMonitor:
             # Look for SOL transfer instructions
             for instruction in tx.message.instructions:
                 program_id = str(tx.message.account_keys[instruction.program_id_index])
-                
+
                 # System program transfer
                 if program_id == "11111111111111111111111111111111":
                     # Decode transfer amount
@@ -403,10 +403,10 @@ class MempoolMonitor:
                         # Next 8 bytes = lamports
                         lamports = int.from_bytes(instruction.data[4:12], 'little')
                         return lamports / 1e9
-                        
-        except:
+
+        except (AttributeError, IndexError, TypeError, ValueError):
             pass
-            
+
         return 0
         
     def _extract_priority_fee(self, tx: VersionedTransaction) -> int:
@@ -416,20 +416,20 @@ class MempoolMonitor:
         try:
             # Look for ComputeBudget program
             compute_budget_program = "ComputeBudget111111111111111111111111111111"
-            
+
             for instruction in tx.message.instructions:
                 program_id = str(tx.message.account_keys[instruction.program_id_index])
-                
+
                 if program_id == compute_budget_program:
                     # Parse compute unit price
                     if len(instruction.data) >= 9:
                         # Instruction type 3 = SetComputeUnitPrice
                         if instruction.data[0] == 3:
                             return int.from_bytes(instruction.data[1:9], 'little')
-                            
-        except:
+
+        except (AttributeError, IndexError, TypeError, ValueError):
             pass
-            
+
         return 0
         
     async def _check_for_signals(self, tx: MempoolTransaction) -> Optional[EarlySignal]:
@@ -505,17 +505,17 @@ class MempoolMonitor:
                     "method": "getAccountInfo",
                     "params": [token_mint, {"encoding": "jsonParsed"}]
                 }
-                
+
                 async with self.session.post(self.rpc_url, json=payload) as response:
                     if response.status == 200:
                         data = await response.json()
                         # If account exists and is old, it's known
                         if data.get('result', {}).get('value'):
                             return True
-                            
-        except:
+
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, KeyError):
             pass
-            
+
         return False
         
     async def _is_suspicious_pattern(self, tx: MempoolTransaction) -> bool:

@@ -213,15 +213,21 @@ def check_dependencies() -> Dict[str, Dict]:
 
     for package, required_version in required_packages.items():
         try:
-            # Try to import
+            # Try to import - Use importlib for safety
+            import importlib
             if package == 'python-telegram-bot':
-                module = __import__('telegram')
+                module = importlib.import_module('telegram')
             elif package == 'scikit-learn':
-                module = __import__('sklearn')
+                module = importlib.import_module('sklearn')
             elif package == 'PyNaCl':
-                module = __import__('nacl')
+                module = importlib.import_module('nacl')
             else:
-                module = __import__(package)
+                # Only allow known safe packages
+                safe_packages = {'aiohttp', 'websockets', 'solders', 'solana', 'base58', 'aiosqlite'}
+                if package in safe_packages:
+                    module = importlib.import_module(package)
+                else:
+                    raise ImportError(f"Package {package} not in whitelist")
 
             # Get version
             version = getattr(module, '__version__', 'unknown')

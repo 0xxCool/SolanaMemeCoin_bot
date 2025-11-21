@@ -945,11 +945,18 @@ class Trader:
                 try:
                     # Try JSON array format [1,2,3,...]
                     import json
+                    # Validate JSON size
+                    if len(private_key) > 1000:
+                        raise ValueError("Private key too long")
                     key_array = json.loads(private_key)
+                    # Validate it's a list
+                    if not isinstance(key_array, list):
+                        raise ValueError("Expected JSON array")
                     self.keypair = Keypair.from_bytes(bytes(key_array))
                     print(f"✅ Loaded wallet from JSON array private key")
                 except Exception as e2:
-                    raise ValueError(f"❌ Failed to decode PRIVATE_KEY. Try Base58 or JSON array format.\nBase58 error: {e1}\nJSON error: {e2}")
+                    # DON'T log the actual keys!
+                    raise ValueError(f"❌ Failed to decode PRIVATE_KEY. Try Base58 or JSON array format.\nError: Invalid key format")
         else:
             self.keypair = keypair
 

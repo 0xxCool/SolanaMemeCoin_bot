@@ -80,7 +80,7 @@ def is_valid_solana_address(address: str) -> bool:
     try:
         Pubkey.from_string(address)
         return True
-    except:
+    except (ValueError, TypeError, AttributeError):
         return False
 
 # Aliases for compatibility with tests
