@@ -1,3 +1,34 @@
+❌ Failed checks (1 warning, 1 inconclusive)
+Check name	Status	Explanation	Resolution
+Docstring Coverage	⚠️ Warning	Docstring coverage is 76.92% which is insufficient. The required threshold is 80.00%.	You can run @coderabbitai generate docstrings to improve docstring coverage.
+Title check	❓ Inconclusive	The title is vague and overly broad, referencing a generic source ('fix.log') rather than describing the actual technical changes made to the codebase.	Consider a more specific title that highlights the main changes, such as 'Replace busy-wait loops with asyncio.Event for concurrency control and add logging' or 'Improve initialization synchronization and add exception logging across modules'.
+✅ Passed checks (1 passed)
+✨ Finishing touches
+Comment @coderabbitai help to get the list of available commands and usage tips.
+
+@0xxCool
+Owner
+Author
+0xxCool
+commented
+12 minutes ago
+@coderabbitai review
+
+@coderabbitai
+Contributor
+coderabbitai bot
+commented
+12 minutes ago
+✅ Actions performed
+Review triggered.
+
+Note: CodeRabbit is an incremental review system and does not re-review already reviewed commits. This command is applicable only when automatic reviews are paused.
+
+coderabbitai[bot]
+coderabbitai bot reviewed 8 minutes ago
+Contributor
+coderabbitai bot
+left a comment
 Actionable comments posted: 1
 
 Caution
@@ -5,204 +36,181 @@ Caution
 Some comments are outside the diff and can’t be posted inline due to platform limitations.
 
 ⚠️ Outside diff range comments (2)
-analyzer.py (2)
-129-150: Ensure session is always initialized, even when RPC clients fail.
+ai_engine.py (1)
+343-368: Replace asyncio.Event with asyncio.Lock for proper initialization serialization
 
-If all RPC connections fail (lines 134-145), the method continues to line 147 and creates the session. However, if an unexpected exception occurs during RPC client creation, the session might not be initialized, leading to NoneType errors later.
+The race condition analysis is correct. Multiple concurrent callers can bypass the serialization:
 
-Add defensive initialization:
+Event is initially set, so all await self._init_event.wait() calls return immediately
+All callers then see _initialized == False and proceed to clear the event
+Multiple tasks execute load_models() concurrently instead of serializing
+This pattern appears across the codebase (MLPredictor, analyzer.py use identical code) and introduces potential state inconsistency.
 
-     async def _initialize(self):
-         """Initialisiert Async Clients und Session"""
-         global async_clients
-         
--        # Erstelle mehrere RPC Clients für Load Balancing
--        async_clients = [AsyncClient(RPC_URL)]
--        for backup_url in BACKUP_RPC_URLS[:2]:  # Max 2 Backups
--            try:
--                client = AsyncClient(backup_url)
--                async_clients.append(client)
--            except (ConnectionError, TimeoutError) as e:
--                logger.warning(f"Could not connect to backup RPC {backup_url}: {e}")
--            except Exception as e:
--                logger.error(
--                    f"Unexpected error connecting to {backup_url}: {e}",
--                    exc_info=True
--                )
--                
--        self.session = aiohttp.ClientSession(
--            timeout=aiohttp.ClientTimeout(total=5),
--            connector=aiohttp.TCPConnector(limit=100, limit_per_host=30)
--        )
-+        try:
-+            # Erstelle mehrere RPC Clients für Load Balancing
-+            async_clients = [AsyncClient(RPC_URL)]
-+            for backup_url in BACKUP_RPC_URLS[:2]:  # Max 2 Backups
-+                try:
-+                    client = AsyncClient(backup_url)
-+                    async_clients.append(client)
-+                except (ConnectionError, TimeoutError) as e:
-+                    logger.warning(f"Could not connect to backup RPC {backup_url}: {e}")
-+                except Exception as e:
-+                    logger.error(
-+                        f"Unexpected error connecting to {backup_url}: {e}",
-+                        exc_info=True
-+                    )
-+        finally:
-+            # Always create session, even if RPC setup partially failed
-+            if self.session is None:
-+                self.session = aiohttp.ClientSession(
-+                    timeout=aiohttp.ClientTimeout(total=5),
-+                    connector=aiohttp.TCPConnector(limit=100, limit_per_host=30)
-+                )
-1-1: Pipeline failure indicates breaking change in public API.
+Implement the proposed Lock-based pattern:
 
-The pipeline failure shows: ImportError: cannot import name 'Analyzer' from 'analyzer'. The class was renamed from Analyzer to EnhancedAnalyzer, but external code is still trying to import the old name.
-
-Add a compatibility alias to prevent breaking existing code:
-
- # Global instance
- analyzer = EnhancedAnalyzer()
-+
-+# Backward compatibility alias
-+Analyzer = EnhancedAnalyzer
-Alternatively, if you want to explicitly deprecate the old name:
-
-import warnings
-
-def __getattr__(name):
-    if name == 'Analyzer':
-        warnings.warn(
-            "Importing 'Analyzer' is deprecated, use 'EnhancedAnalyzer' instead",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        return EnhancedAnalyzer
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-🧹 Nitpick comments (4)
-ai_engine.py (2)
-346-362: Replace busy-wait loop with asyncio.Event for better concurrency.
-
-The busy-wait pattern while self._initializing: await asyncio.sleep(0.1) is inefficient and can cause unnecessary delays and CPU usage under high concurrency. Multiple callers will repeatedly wake up and check the flag every 100ms.
-
-Replace the busy-wait with an asyncio.Event:
-
+ class AdvancedAIEngine:
      def __init__(self):
-         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-         print(f"🤖 AI Engine using device: {self.device}")
-         
-         # ... existing code ...
-         
-         # Initialization flags
-         self._initialized = False
--        self._initializing = False
-+        self._init_event = asyncio.Event()
-+        self._init_event.set()  # Initially ready to initialize
+-        self._initialized = False
+-        self._init_event = asyncio.Event()
+-        self._init_event.set()
++        self._initialized = False
++        self._init_lock = asyncio.Lock()
 
+     async def ensure_initialized(self):
+         if self._initialized:
+             return
+
+-        await self._init_event.wait()
+-        if self._initialized:
+-            return
+-        self._init_event.clear()
+-        try:
+-            await self.load_models()
+-            self._initialized = True
+-        finally:
+-            self._init_event.set()
++        async with self._init_lock:
++            if self._initialized:
++                return
++            await self.load_models()
++            self._initialized = True
+analyzer.py (1)
+102-131: Replace asyncio.Event with asyncio.Lock for proper mutual exclusion during initialization
+
+The Event-based pattern in analyzer.py (lines 102-131) does not prevent concurrent _initialize() calls. Multiple coroutines awaiting a set Event all wake up simultaneously and can enter the critical section before any of them clears the event. This causes concurrent mutations to shared resources:
+
+async_clients global list (appended by multiple tasks concurrently—line 137)
+self.session aiohttp.ClientSession (multiple tasks could each create one—line 152)
+Apply the suggested fix to use asyncio.Lock() instead:
+
+ class EnhancedAnalyzer:
+     def __init__(self):
+         self.session: Optional[aiohttp.ClientSession] = None
+         self.cache = {}  # Cache für bereits analysierte Token
+         self.pattern_detector = PatternDetector()
+         self.social_analyzer = SocialSentimentAnalyzer()
+         self._initialized = False
+-        self._init_event = asyncio.Event()
+-        self._init_event.set()  # Initially ready to initialize
++        self._init_lock = asyncio.Lock()
+ 
      async def ensure_initialized(self):
          """Stellt sicher, dass die Initialisierung durchgeführt wurde"""
          if self._initialized:
              return
-
--        if self._initializing:
--            # Warte, bis die Initialisierung abgeschlossen ist
--            while self._initializing:
--                await asyncio.sleep(0.1)
+ 
+-        # Wait for permission to initialize (only one caller proceeds)
+-        await self._init_event.wait()
+-
+-        # Double-check after acquiring the event
+-        if self._initialized:
 -            return
 -
--        self._initializing = True
-+        # Wait for permission to initialize (only one caller proceeds)
-+        await self._init_event.wait()
-+        
-+        # Double-check after acquiring the event
-+        if self._initialized:
-+            return
-+            
-+        self._init_event.clear()  # Block other callers
-         try:
-             await self.load_models()
-             self._initialized = True
-         finally:
--            self._initializing = False
-+            self._init_event.set()  # Unblock waiting callers
-This ensures only one initialization runs while others efficiently wait without polling.
+-        self._init_event.clear()  # Block other callers
+-        try:
+-            await self._initialize()
+-            self._initialized = True
+-        finally:
+-            self._init_event.set()  # Unblock waiting callers
++        async with self._init_lock:
++            if self._initialized:
++                return
++            await self._initialize()
++            self._initialized = True
+The same issue exists in ml_predictor.py and ai_engine.py—apply the same lock-based fix to all three.
 
-581-582: Consider logging the exception for debugging.
+🧹 Nitpick comments (5)
+ml_predictor.py (1)
+321-329: Broad Exception catch in confidence calculation (Ruff BLE001)
 
-While replacing bare except: with except Exception: is an improvement (avoids catching SystemExit/KeyboardInterrupt), the exception is silently swallowed with pass. This could hide genuine errors during ensemble prediction.
+Catching bare Exception around predict_proba is understandable to keep prediction robust, but it does trip BLE001 and may hide programming errors:
 
-Based on static analysis hints, consider logging the exception:
+if hasattr(self.models['returns'], 'predict_proba'):
+    try:
+        proba = self.models['returns'].predict_proba([[predicted_return]])
+        ...
+    except Exception as e:
+        logger.debug(f"Could not calculate model confidence: {e}")
+If you want to quiet Ruff while staying robust, you could:
 
-             try:
-                 if hasattr(model, 'predict'):
-                     pred = model.predict(features.reshape(1, -1))[0]
-                     predictions.append(pred)
--            except Exception:
--                pass
-+            except Exception as e:
-+                logger.debug(f"Ensemble model {name} prediction failed: {e}")
-Note: Only log at debug level since ensemble models gracefully degrade when some fail.
+Narrow the exception types (e.g., ValueError, RuntimeError) if that’s what scikit-learn actually throws here, or
+Keep the broad catch but add # noqa: BLE001 with a short comment explaining that this is intentionally defensive.
+ai_engine.py (1)
+582-589: Ensemble prediction error handling vs. BLE001
 
-ml_predictor.py (2)
-147-163: Same busy-wait pattern as in ai_engine.py - consider abstracting this pattern.
+Switching from silent pass to:
 
-This ensure_initialized() method duplicates the same busy-wait pattern found in ai_engine.py (lines 346-362) and analyzer.py (lines 111-127). Consider:
+for name, model in self.ensemble_models.items():
+    try:
+        ...
+    except Exception as e:
+        logger.debug(f"Ensemble model {name} prediction failed: {e}")
+is a clear improvement in observability and keeps ensemble prediction robust even if one model misbehaves.
 
-Replacing the busy-wait with asyncio.Event (same fix as suggested for ai_engine.py)
-Extracting this pattern into a reusable decorator or base class to avoid code duplication
-For the immediate fix, apply the same asyncio.Event pattern:
+If Ruff’s BLE001 becomes noisy, you can either:
 
-     def __init__(self):
-         # ... existing code ...
-         
-         # Initialization flag
-         self._initialized = False
--        self._initializing = False
-+        self._init_event = asyncio.Event()
-+        self._init_event.set()
+Narrow the exception to expected types (ValueError, RuntimeError, etc.), or
+Keep the broad catch (to tolerate arbitrary model implementations) and annotate with # noqa: BLE001 plus a brief comment that robustness is intentional here.
+Functionally this is fine as-is.
 
-     async def ensure_initialized(self):
-         """Stellt sicher, dass die Initialisierung durchgeführt wurde"""
-         if self._initialized:
-             return
+analyzer.py (3)
+157-235: Parallel task execution + error logging in analyze_token
 
--        if self._initializing:
--            # Warte, bis die Initialisierung abgeschlossen ist
--            while self._initializing:
--                await asyncio.sleep(0.1)
--            return
--
--        self._initializing = True
-+        await self._init_event.wait()
-+        if self._initialized:
-+            return
-+            
-+        self._init_event.clear()
-         try:
-             await self._initialize()
-             self._initialized = True
-         finally:
--            self._initializing = False
-+            self._init_event.set()
-Longer term, consider creating a shared @lazy_initialize decorator or LazyInitializedComponent base class to eliminate duplication.
+The updated analyze_token flow:
 
-321-322: Exception swallowed without logging.
+Ensures initialization once via await self.ensure_initialized().
+Runs all expensive metric-fetching tasks in parallel with asyncio.gather(..., return_exceptions=True).
+Iterates over results and logs any exceptions with logger.error(f"Task {i} error: {result}", exc_info=result), but still proceeds.
+Applies:
+Fast basic filters,
+Advanced filters,
+ML-based “SKIP with high confidence” short-circuit, and
+Final score threshold and rug-pattern warning.
+This is a substantial robustness and observability improvement over failing the entire analysis on a single API/Mempool/ML error. The ML gate:
 
-Similar to ai_engine.py line 581, this silently ignores exceptions during model confidence calculation.
+if metrics.ml_recommended_action == "SKIP" and metrics.ml_confidence > 0.7:
+    ...
+    return None
+is also nicely conservative.
 
-As suggested by static analysis, consider adding minimal logging:
+No functional issues spotted here.
 
-             try:
-                 proba = self.models['returns'].predict_proba([[predicted_return]])
-                 model_confidence = np.max(proba)
-                 confidence = (confidence + model_confidence) / 2
--            except Exception:
--                pass
-+            except Exception as e:
-+                logger.debug(f"Could not calculate model confidence: {e}")
+295-372: Helper metric fetchers: consistent error logging and graceful degradation
+
+Across _fetch_advanced_metrics, _fetch_mempool_data, _run_ml_prediction, _fetch_holder_metrics, _fetch_volume_metrics, _fetch_security_check, and _fetch_price_metrics you’ve standardized on:
+
+A try block per helper.
+Catching Exception and logging with logger.error(..., exc_info=True).
+Falling back to safe defaults (e.g. low ML confidence and action "SKIP" when ML prediction fails).
+This is coherent with the high-level goal of “log and continue” from the PR description and dovetails with analyze_token’s gather(..., return_exceptions=True) behavior.
+
+Two optional points to consider (not blockers):
+
+If some of these failures are expected/benign (e.g. missing pair data vs. real runtime bugs), using logger.warning for expected cases and logger.error for unexpected ones could make logs easier to triage.
+In _run_ml_prediction, on ML errors you set ml_confidence and ml_recommended_action but leave ml_risk_score at its default; if you plan to use ml_risk_score more heavily later, you may want to explicitly set a conservative fallback (e.g. ml_risk_score = 0.5 or 1.0).
+Functionally, the current behavior is safe.
+
+Also applies to: 330-331, 435-436, 448-452, 470-471, 474-476, 486-487, 489-490, 499-507
+
+624-627: Global instance and backward-compatibility alias
+
+Creating a global analyzer = EnhancedAnalyzer() plus:
+
+# Backward compatibility alias
+Analyzer = EnhancedAnalyzer
+is a pragmatic way to keep existing imports (from analyzer import Analyzer or from analyzer import analyzer) working while exposing the enhanced implementation.
+
+One minor consideration: with both Analyzer (class alias) and analyzer (instance) exported, it’s worth documenting expected usage somewhere (README or docstring) to avoid confusion for new callers, but that’s optional.
+
 📜 Review details
-analyzer.py
-Comment on lines +111 to +127
+ml_predictor.py
+Comment on lines 147 to 170
+        # Initialization flag
+        self._initialized = False
+        self._initializing = False
+        self._init_event = asyncio.Event()
+        self._init_event.set()  # Initially ready to initialize
+
     async def ensure_initialized(self):
         """Stellt sicher, dass die Initialisierung durchgeführt wurde"""
         if self._initialized:
@@ -212,82 +220,52 @@ Comment on lines +111 to +127
             # Warte, bis die Initialisierung abgeschlossen ist
             while self._initializing:
                 await asyncio.sleep(0.1)
+        # Wait for permission to initialize (only one caller proceeds)
+        await self._init_event.wait()
+
+        # Double-check after acquiring the event
+        if self._initialized:
             return
 
         self._initializing = True
+        self._init_event.clear()  # Block other callers
         try:
             await self._initialize()
             self._initialized = True
         finally:
             self._initializing = False
+            self._init_event.set()  # Unblock waiting callers
+
 Contributor
 @coderabbitai
 coderabbitai bot
-now
-🛠️ Refactor suggestion | 🟠 Major
+8 minutes ago
+⚠️ Potential issue | 🟠 Major
 
-Third instance of the same busy-wait pattern - duplication across all three files.
+🧩 Analysis chain
+Replace asyncio.Event with asyncio.Lock for true mutual exclusion in initialization
 
-This is the third file with identical ensure_initialized() logic using a busy-wait loop. The pattern appears in:
+The asyncio.Event-based pattern allows concurrent initializations across all three classes. When _init_event is set(), all coroutines waiting on await _init_event.wait() wake simultaneously and proceed past the double-check—each sees _initialized=False and calls _initialize() concurrently. This defeats mutual exclusion and causes duplicate model loading/training and conflicting writes.
 
-ai_engine.py (lines 346-362)
-ml_predictor.py (lines 147-163)
-analyzer.py (lines 111-127)
-In addition to fixing the busy-wait issue (use asyncio.Event as suggested in the other files), strongly recommend extracting this pattern to eliminate duplication:
+Fixes required in:
 
-Option 1: Shared decorator
-
-# shared_utils.py
-def lazy_async_init(init_method_name='_initialize'):
-    """Decorator for lazy async initialization"""
-    def decorator(cls):
-        original_init = cls.__init__
-        
-        def new_init(self, *args, **kwargs):
-            original_init(self, *args, **kwargs)
-            self._initialized = False
-            self._init_event = asyncio.Event()
-            self._init_event.set()
-        
-        async def ensure_initialized(self):
-            if self._initialized:
-                return
-            await self._init_event.wait()
-            if self._initialized:
-                return
-            self._init_event.clear()
-            try:
-                await getattr(self, init_method_name)()
-                self._initialized = True
-            finally:
-                self._init_event.set()
-        
-        cls.__init__ = new_init
-        cls.ensure_initialized = ensure_initialized
-        return cls
-    return decorator
-Option 2: Base class
-
-# shared_utils.py
-class LazyInitializedComponent:
-    def __init__(self):
-        self._initialized = False
-        self._init_event = asyncio.Event()
-        self._init_event.set()
-    
-    async def ensure_initialized(self):
-        if self._initialized:
-            return
-        await self._init_event.wait()
-        if self._initialized:
-            return
-        self._init_event.clear()
-        try:
-            await self._initialize()
-            self._initialized = True
-        finally:
-            self._init_event.set()
-    
-    async def _initialize(self):
-        raise NotImplementedError
-Then each class would simply inherit from LazyInitializedComponent and implement _initialize().
+ml_predictor.py (lines 147–169): Replace _init_event with _init_lock; use async with self._init_lock: instead of event signaling
+ai_engine.py (lines 344–345, 351–368): Same fix; replace _init_event with _init_lock
+analyzer.py (lines 109–110, 112–129): Same fix; replace _init_event with _init_lock
+- self._init_event = asyncio.Event()
+- self._init_event.set()
++ self._init_lock = asyncio.Lock()
+- await self._init_event.wait()
+- if self._initialized:
+-     return
+- self._init_event.clear()
+- try:
+-     await self._initialize()
+-     self._initialized = True
+- finally:
+-     self._init_event.set()
++ async with self._init_lock:
++     if self._initialized:
++         return
++     await self._initialize()
++     self._initialized = True
