@@ -48,7 +48,7 @@ class SecurityManager:
                     return salt
                 else:
                     logger.warning("⚠️ Invalid salt file, regenerating...")
-            except Exception as e:
+            except (IOError, OSError) as e:
                 logger.warning(f"⚠️ Failed to load salt: {e}, generating new one")
 
         # Generate new random salt
@@ -60,9 +60,12 @@ class SecurityManager:
             # Set restrictive permissions (owner read/write only)
             os.chmod(self.salt_path, 0o600)
             logger.info("✅ Generated new unique encryption salt")
-        except Exception as e:
-            logger.error(f"❌ Failed to save salt: {e}")
-            # Fall back to memory-only salt (will be regenerated on restart)
+        except (IOError, OSError, PermissionError) as e:
+            logger.exception(f"❌ Failed to save salt: {e}")
+            raise RuntimeError(
+                f"Cannot initialize encryption: failed to save salt file to {self.salt_path}. "
+                "This is required to prevent data loss on restart."
+            ) from e
 
         return salt
 
