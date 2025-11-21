@@ -11,7 +11,6 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.backends import default_backend
 import base64
 
 logger = logging.getLogger(__name__)
@@ -43,8 +42,7 @@ class SecurityManager:
             algorithm=hashes.SHA256(),
             length=32,
             salt=b'solana_bot_salt',  # In production, use random salt stored securely
-            iterations=100000,
-            backend=default_backend()
+            iterations=100000
         )
         key = base64.urlsafe_b64encode(kdf.derive(self.secret_key.encode()))
         return Fernet(key)
