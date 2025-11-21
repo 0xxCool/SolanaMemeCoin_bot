@@ -249,8 +249,8 @@ class SmartOrderRouter:
         
         # Calculate savings vs worst quote
         if len(scored_quotes) > 1:
-            worst_output = min(q[1]['outputAmount'] for q in scored_quotes)
-            best_output = best_quote['outputAmount']
+            worst_output = min(q[1]['output_amount'] for q in scored_quotes)
+            best_output = best_quote['output_amount']
             savings_pct = ((best_output - worst_output) / worst_output) * 100
             best_quote['savings_pct'] = savings_pct
             
@@ -262,13 +262,13 @@ class SmartOrderRouter:
         Higher score = better quote
         """
         score = 100.0
-        
+
         # Output amount (most important)
-        output_factor = quote.get('outputAmount', 0) / 1e9  # Convert to SOL
+        output_factor = quote.get('output_amount', 0) / 1e9  # Convert to SOL
         score += output_factor * 10
-        
+
         # Price impact (negative score)
-        price_impact = abs(quote.get('priceImpactPct', 0))
+        price_impact = abs(quote.get('price_impact', 0))
         score -= price_impact * 5
         
         # DEX reliability
@@ -318,14 +318,14 @@ class SmartOrderRouter:
                 split_quotes.append(split_quote)
                 
         if len(split_quotes) == 2:
-            total_output = sum(q['outputAmount'] for q in split_quotes)
-            
+            total_output = sum(q['output_amount'] for q in split_quotes)
+
             return {
                 'type': 'SPLIT',
-                'outputAmount': total_output,
+                'output_amount': total_output,
                 'splits': split_quotes,
                 'dexs': [q['dex'] for q in split_quotes],
-                'priceImpactPct': statistics.mean([q.get('priceImpactPct', 0) for q in split_quotes])
+                'price_impact': statistics.mean([q.get('price_impact', 0) for q in split_quotes])
             }
             
         return None
@@ -334,9 +334,9 @@ class SmartOrderRouter:
         """Check if split routing is beneficial"""
         if not split_quote:
             return False
-            
+
         # Split is beneficial if output is >1% better
-        improvement = (split_quote['outputAmount'] - single_quote['outputAmount']) / single_quote['outputAmount']
+        improvement = (split_quote['output_amount'] - single_quote['output_amount']) / single_quote['output_amount']
         return improvement > 0.01
         
     async def execute_smart_swap(self, quote: Dict, keypair) -> Optional[str]:
@@ -379,7 +379,7 @@ class SmartOrderRouter:
             try:
                 await dex.close()
                 logger.info(f"✅ Closed {dex_name} session")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - Broad exception OK in cleanup to prevent crashes
                 logger.warning(f"Error closing {dex_name} session: {e}")
 
 class MultiRegionRPC:
@@ -1039,6 +1039,13 @@ class Trader:
             print(f"❌ Error opening position: {e}")
             return None
 
+    async def execute_trade(self, token_metrics, amount_sol: float) -> Optional[Position]:
+        """
+        Backward-compatible alias for opening a position.
+        Required by existing tests/legacy code.
+        """
+        return await self.open_position(token_metrics, amount_sol)
+
     async def close_position(self, token_address: str, reason: str = "MANUAL") -> bool:
         """
         Closes an existing position
@@ -1162,7 +1169,7 @@ class Trader:
         try:
             await smart_router.close()
             logger.info("✅ Trader cleanup completed - DEX sessions closed")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - Broad exception OK in cleanup to prevent crashes
             logger.warning(f"⚠️ Trader cleanup warning: {e}")
 
 # Global trader instance

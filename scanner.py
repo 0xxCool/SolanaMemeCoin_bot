@@ -419,10 +419,14 @@ class HighPerformanceScanner:
         while self.running:
             await asyncio.sleep(60)  # Jede Minute
 
+            # ✅ Thread-safe read of cache size
+            async with self.processed_pairs_lock:
+                cache_size = len(self.processed_pairs)
+
             logger.info(
                 f"📊 Scanner Stats: received={self.stats['received']}, "
                 f"processed={self.stats['processed']}, queue={self.processing_queue.qsize()}, "
-                f"cache={len(self.processed_pairs)} pairs"
+                f"cache={cache_size} pairs"
             )
 
             # Reset Stats
