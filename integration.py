@@ -84,6 +84,10 @@ class IntegrationManager:
             if not analysis:
                 return None
 
+            # Normalize to dict for downstream processing
+            if hasattr(analysis, "to_dict"):
+                analysis = analysis.to_dict()
+
             # Apply basic filters
             if not self._passes_basic_filters(analysis):
                 logger.debug(f"Token {token_data.get('symbol')} failed basic filters")
