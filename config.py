@@ -9,7 +9,22 @@ from typing import Dict, List, Tuple
 # ==============================================================================
 # API & RPC ENDPOINTS
 # ==============================================================================
-DEXSCREENER_WSS_URL = "wss://api.dexscreener.com/pair/realtime"
+# WebSocket URLs für DexScreener - Mit Fallback-Optionen
+DEXSCREENER_WSS_URLS = [
+    "wss://io.dexscreener.com/dex/screener/pairs/h24/1?rankBy[key]=pairAge&rankBy[order]=asc&filters[chainId]=solana",
+    "wss://io.dexscreener.com/dex/screener",
+    "wss://api.dexscreener.com/pair/realtime",  # Legacy fallback
+]
+
+# Primary URL (backward compatibility)
+DEXSCREENER_WSS_URL = DEXSCREENER_WSS_URLS[0]
+
+# WebSocket Headers für Cloudflare-Schutz
+DEXSCREENER_WSS_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Origin": "https://dexscreener.com",
+}
+
 RPC_URL = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")
 # Backup RPCs für Failover
 BACKUP_RPC_URLS = [

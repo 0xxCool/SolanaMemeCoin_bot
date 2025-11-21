@@ -12,7 +12,12 @@ from collections import deque
 from dataclasses import dataclass, field
 import heapq
 
-from config import DEXSCREENER_WSS_URL, ENABLE_SNIPING_MODE
+from config import (
+    DEXSCREENER_WSS_URL,
+    DEXSCREENER_WSS_URLS,
+    DEXSCREENER_WSS_HEADERS,
+    ENABLE_SNIPING_MODE
+)
 from analyzer import analyzer
 import telegram_bot
 
@@ -42,6 +47,8 @@ class HighPerformanceScanner:
             'alerts_sent': 0
         }
         self.running = False
+        self.current_wss_endpoint_index = 0  # Track welcher Endpoint aktuell verwendet wird
+        self.endpoint_failures: Dict[str, int] = {}  # Track Fehler pro Endpoint
         
     async def start(self):
         """Startet Scanner mit mehreren Worker-Threads"""
@@ -60,54 +67,113 @@ class HighPerformanceScanner:
         await self._websocket_loop()
         
     async def _websocket_loop(self):
-        """Haupt WebSocket Loop mit Auto-Reconnect"""
+        """Haupt WebSocket Loop mit Auto-Reconnect und Endpoint-Rotation"""
         subscribe_messages = [
             {
                 "method": "subscribe",
                 "params": ["newPairs", "solana"]
             }
         ]
-        
+
         # Im Sniping Mode auch auf Liquidity Events hören
         if ENABLE_SNIPING_MODE:
             subscribe_messages.append({
-                "method": "subscribe", 
+                "method": "subscribe",
                 "params": ["liquidityEvents", "solana"]
             })
-        
+
         backoff = 1
-        
+        consecutive_502_errors = 0
+        max_502_before_rotation = 3  # Nach 3 502-Fehlern zum nächsten Endpoint wechseln
+
         while self.running:
+            # Wähle aktuellen WebSocket-Endpoint
+            current_url = DEXSCREENER_WSS_URLS[self.current_wss_endpoint_index]
+
             try:
+                logger.info(f"🔌 Verbinde zu WebSocket-Endpoint #{self.current_wss_endpoint_index + 1}: {current_url}")
+
                 async with websockets.connect(
-                    DEXSCREENER_WSS_URL,
+                    current_url,
+                    extra_headers=DEXSCREENER_WSS_HEADERS,
                     ping_interval=20,
                     ping_timeout=10,
-                    close_timeout=10
+                    close_timeout=10,
+                    max_size=10 * 1024 * 1024  # 10MB max message size
                 ) as websocket:
 
-                    logger.info(f"✅ WebSocket verbunden. Subscribing zu {len(subscribe_messages)} Events...")
+                    logger.info(f"✅ WebSocket verbunden zu Endpoint #{self.current_wss_endpoint_index + 1}! Subscribing zu {len(subscribe_messages)} Events...")
 
                     # Subscribe zu allen Events
                     for msg in subscribe_messages:
                         await websocket.send(json.dumps(msg))
 
-                    backoff = 1  # Reset backoff bei erfolgreicher Verbindung
+                    # Reset auf Erfolg
+                    backoff = 1
+                    consecutive_502_errors = 0
+                    self.endpoint_failures[current_url] = 0
 
                     # Message Processing Loop
                     async for message in websocket:
                         asyncio.create_task(self._handle_message(message))
 
+            except websockets.exceptions.InvalidStatusCode as e:
+                # Spezielle Behandlung für HTTP-Status-Fehler (wie 502)
+                if e.status_code == 502:
+                    consecutive_502_errors += 1
+                    self.endpoint_failures[current_url] = self.endpoint_failures.get(current_url, 0) + 1
+
+                    logger.error(
+                        f"❌ WebSocket 502 Bad Gateway Fehler bei Endpoint #{self.current_wss_endpoint_index + 1} "
+                        f"(Versuch {consecutive_502_errors}/{max_502_before_rotation}): {current_url}"
+                    )
+
+                    # Nach mehreren 502-Fehlern zum nächsten Endpoint wechseln
+                    if consecutive_502_errors >= max_502_before_rotation:
+                        logger.warning(
+                            f"⚠️ {max_502_before_rotation} aufeinanderfolgende 502-Fehler. "
+                            f"Wechsle zum nächsten Endpoint..."
+                        )
+                        self._rotate_to_next_endpoint()
+                        consecutive_502_errors = 0
+                        backoff = 1  # Schneller Retry bei Endpoint-Wechsel
+                else:
+                    logger.error(f"❌ WebSocket HTTP {e.status_code} Fehler: {e}")
+
             except websockets.exceptions.ConnectionClosed as e:
                 logger.warning(f"⚠️ WebSocket Verbindung geschlossen: {e}")
+
+            except OSError as e:
+                # Netzwerk-Fehler (Connection refused, timeout, etc.)
+                logger.error(f"❌ Netzwerk-Fehler bei WebSocket-Verbindung: {e}")
+                self.endpoint_failures[current_url] = self.endpoint_failures.get(current_url, 0) + 1
+
+                # Bei wiederholten Netzwerk-Fehlern Endpoint wechseln
+                if self.endpoint_failures[current_url] >= 5:
+                    logger.warning(f"⚠️ Zu viele Fehler für Endpoint. Wechsle zum nächsten...")
+                    self._rotate_to_next_endpoint()
+
             except Exception as e:
-                logger.error(f"❌ WebSocket Fehler: {e}", exc_info=True)
+                logger.error(f"❌ Unerwarteter WebSocket-Fehler: {e}", exc_info=True)
+
+            if not self.running:
+                break
 
             # Exponential Backoff für Reconnect
             wait_time = min(backoff, 30)
             logger.info(f"🔄 Reconnect in {wait_time} Sekunden...")
             await asyncio.sleep(wait_time)
-            backoff *= 2
+            backoff = min(backoff * 2, 30)  # Max 30 Sekunden
+
+    def _rotate_to_next_endpoint(self):
+        """Wechselt zum nächsten verfügbaren WebSocket-Endpoint"""
+        old_index = self.current_wss_endpoint_index
+        self.current_wss_endpoint_index = (self.current_wss_endpoint_index + 1) % len(DEXSCREENER_WSS_URLS)
+
+        logger.info(
+            f"🔄 Endpoint-Rotation: #{old_index + 1} -> #{self.current_wss_endpoint_index + 1} "
+            f"({DEXSCREENER_WSS_URLS[self.current_wss_endpoint_index]})"
+        )
             
     async def _handle_message(self, message: str):
         """Verarbeitet eingehende WebSocket Messages"""
