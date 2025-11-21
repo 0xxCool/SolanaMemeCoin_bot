@@ -19,10 +19,18 @@ DEXSCREENER_WSS_URLS = [
 # Primary URL (backward compatibility)
 DEXSCREENER_WSS_URL = DEXSCREENER_WSS_URLS[0]
 
-# WebSocket Headers für Cloudflare-Schutz
+# WebSocket Headers für Cloudflare-Schutz (erweitert für bessere Bot-Detection-Umgehung)
 DEXSCREENER_WSS_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9,de;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
     "Origin": "https://dexscreener.com",
+    "Referer": "https://dexscreener.com/",
+    "Sec-WebSocket-Version": "13",
+    "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
 }
 
 RPC_URL = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")

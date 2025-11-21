@@ -86,7 +86,9 @@ class HighPerformanceScanner:
 
         backoff = 1
         consecutive_502_errors = 0
+        consecutive_403_errors = 0
         max_502_before_rotation = 3  # Nach 3 502-Fehlern zum nächsten Endpoint wechseln
+        max_403_before_rotation = 2  # Nach 2 403-Fehlern zum nächsten Endpoint wechseln
 
         while self.running:
             # Wähle aktuellen WebSocket-Endpoint
@@ -115,6 +117,7 @@ class HighPerformanceScanner:
                     # Reset auf Erfolg
                     backoff = 1
                     consecutive_502_errors = 0
+                    consecutive_403_errors = 0
                     self.endpoint_failures[current_url] = 0
 
                     # Message Processing Loop
@@ -124,7 +127,7 @@ class HighPerformanceScanner:
                         task.add_done_callback(self.message_tasks.discard)
 
             except websockets.exceptions.InvalidStatusCode as e:
-                # Spezielle Behandlung für HTTP-Status-Fehler (wie 502)
+                # Spezielle Behandlung für HTTP-Status-Fehler (wie 502, 403)
                 self._websocket = None  # Clear stale reference
                 if e.status_code == 502:
                     consecutive_502_errors += 1
@@ -148,6 +151,32 @@ class HighPerformanceScanner:
                         self._rotate_to_next_endpoint()
                         consecutive_502_errors = 0
                         backoff = 1  # Schneller Retry bei Endpoint-Wechsel
+                elif e.status_code == 403:
+                    consecutive_403_errors += 1
+                    self.endpoint_failures[current_url] = self.endpoint_failures.get(current_url, 0) + 1
+
+                    logger.exception(
+                        "❌ WebSocket 403 Forbidden Fehler bei Endpoint #%d "
+                        "(Versuch %d/%d): %s - "
+                        "Möglicherweise Rate Limiting oder Cloudflare-Schutz aktiv",
+                        self.current_wss_endpoint_index + 1,
+                        consecutive_403_errors,
+                        max_403_before_rotation,
+                        current_url,
+                    )
+
+                    # Nach mehreren 403-Fehlern zum nächsten Endpoint wechseln
+                    if consecutive_403_errors >= max_403_before_rotation:
+                        logger.warning(
+                            f"⚠️ {max_403_before_rotation} aufeinanderfolgende 403-Fehler. "
+                            f"Wechsle zum nächsten Endpoint und verwende längeren Backoff..."
+                        )
+                        self._rotate_to_next_endpoint()
+                        consecutive_403_errors = 0
+                        backoff = 10  # Längerer Backoff bei 403 (Rate Limiting)
+                    else:
+                        # Erhöhe Backoff bei 403-Fehlern
+                        backoff = min(backoff * 3, 60)  # Aggressiverer Backoff, max 60 Sekunden
                 else:
                     logger.exception("❌ WebSocket HTTP %s Fehler", e.status_code)
 
