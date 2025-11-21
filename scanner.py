@@ -50,6 +50,7 @@ class HighPerformanceScanner:
         self.running = False
         self.current_wss_endpoint_index = 0  # Track welcher Endpoint aktuell verwendet wird
         self.endpoint_failures: Dict[str, int] = {}  # Track Fehler pro Endpoint
+        self._websocket = None  # Hold reference to current WebSocket for graceful shutdown
         
     async def start(self):
         """Startet Scanner mit mehreren Worker-Threads"""
@@ -102,6 +103,8 @@ class HighPerformanceScanner:
                     close_timeout=10,
                     max_size=10 * 1024 * 1024  # 10MB max message size
                 ) as websocket:
+                    # Store WebSocket reference for graceful shutdown
+                    self._websocket = websocket
 
                     logger.info(f"✅ WebSocket verbunden zu Endpoint #{self.current_wss_endpoint_index + 1}! Subscribing zu {len(subscribe_messages)} Events...")
 
@@ -150,7 +153,7 @@ class HighPerformanceScanner:
             except websockets.exceptions.ConnectionClosed as e:
                 logger.warning(f"⚠️ WebSocket Verbindung geschlossen: {e}")
 
-            except OSError as e:
+            except OSError:
                 # Netzwerk-Fehler (Connection refused, timeout, etc.)
                 logger.exception("❌ Netzwerk-Fehler bei WebSocket-Verbindung")
                 self.endpoint_failures[current_url] = self.endpoint_failures.get(current_url, 0) + 1
@@ -392,6 +395,12 @@ class HighPerformanceScanner:
 
         # Step 1: Stop accepting new work
         self.running = False
+
+        # Step 1b: Close WebSocket to stop receiving new messages
+        if self._websocket and not self._websocket.closed:
+            logger.info("Closing WebSocket connection...")
+            await self._websocket.close()
+            self._websocket = None
 
         # Step 2: Wait for workers to finish current tasks
         logger.info(f"Waiting for {len(self.workers)} workers to finish (timeout: {timeout}s)...")
