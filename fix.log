@@ -1,1792 +1,937 @@
-# 🔧 SOLANA BOT - COMPREHENSIVE CODE OPTIMIZATION GUIDE
+setup_helper.py
+Comment on lines +88 to +95
+        # Try to create keypair
+        try:
+            # For solders, we need the full 64 bytes (secret + public)
+            # We only have secret, so derive public
+            keypair = Keypair.from_bytes(secret_bytes + secret_bytes)  # Temporary
+            return True, f"Valid wallet: {str(keypair.pubkey())}"
+        except Exception as e:
+            return False, f"Cannot create keypair: {e}"
+Contributor
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+⚠️ Potential issue | 🔴 Critical
 
-**For:** Claude Code Execution  
-**Date:** November 16, 2025  
-**Project:** Solana Memecoin Trading Bot v2.0  
-**Current Score:** 95/100  
-**Target Score:** 98-100/100  
+Critical: Incorrect keypair reconstruction in wallet validation.
 
----
+Line 92 attempts to create a keypair by doubling the secret bytes (secret_bytes + secret_bytes), which is incorrect. The Solana keypair requires a 32-byte secret key, and the library should derive the public key from it. This workaround may not produce a valid keypair for validation.
 
-## 📋 TABLE OF CONTENTS
+The correct approach depends on the solders library API. Verify the proper way to reconstruct a keypair from just the secret key bytes. If the library requires the full 64 bytes (secret + public), you need to derive the public key first:
 
-1. [Critical Issues](#critical-issues-must-fix) - 🔴 **MUST FIX**
-2. [High Priority](#high-priority-should-fix) - 🟡 **SHOULD FIX**
-3. [Medium Priority](#medium-priority-nice-to-have) - 🟢 **NICE TO HAVE**
-4. [Low Priority](#low-priority-future) - ⚪ **FUTURE**
-5. [Testing Guidelines](#testing-guidelines)
-6. [Implementation Order](#implementation-order)
-
----
-
-## 🔴 CRITICAL ISSUES (MUST FIX)
-
-### ISSUE #1: Logger Used Before Initialization (main.py)
-
-**Location:** `main.py`, lines 26-29  
-**Severity:** 🔴 **CRITICAL**  
-**Impact:** Potential crashes on startup, no logging for errors
-
-**Problem:**
-```python
-# Line 26-29 - BEFORE logging.basicConfig
-except ImportError:
-    HEALTH_AVAILABLE = False
-    logger = logging.getLogger(__name__)  # ❌ Logger not yet configured!
-    logger.warning("⚠️ Health check module not available")
-```
-
-**Solution:**
-```python
-# CORRECT VERSION - Move logging.basicConfig to TOP of file
-
-import asyncio
-import os
-import sys
-import signal
-import logging
-
-# ✅ Configure logging FIRST (before any imports that use it)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-# Now safe to use logger in try/except blocks
-from dotenv import load_dotenv
-from typing import Optional, Any
-import time
-from telegram import Update
-
-import telegram_bot
-from scanner import scanner
-from analyzer import analyzer
-from trader import trader
-
-# Import Health Check and Security modules
+# Try to create keypair from secret key only
 try:
-    from health import start_health_server, health_check, record_trade
-    from security import get_security_manager
-    HEALTH_AVAILABLE = True
-except ImportError:
-    HEALTH_AVAILABLE = False
-    logger.warning("⚠️ Health check module not available")  # ✅ Now safe!
-```
-
-**Testing:**
-```bash
-# Test by removing health.py temporarily
-mv health.py health.py.bak
-python main.py
-# Should see warning in logs without crash
-mv health.py.bak health.py
-```
-
----
-
-### ISSUE #2: Memory Leak in Scanner (scanner.py)
-
-**Location:** `scanner.py`, line 27  
-**Severity:** 🔴 **CRITICAL**  
-**Impact:** Unbounded memory growth, crashes after hours/days
-
-**Problem:**
-```python
-# Line 27
-class HighPerformanceScanner:
-    def __init__(self):
-        self.processed_pairs: Set[str] = set()  # ❌ Grows forever!
-        # After 24h: 10k tokens/hour = 240k entries = ~50MB memory
-```
-
-**Solution:**
-```python
-from collections import deque
-import time
-
-class HighPerformanceScanner:
-    def __init__(self):
-        # ✅ Use LRU-style cache with size limit
-        self.processed_pairs: Dict[str, float] = {}  # address -> timestamp
-        self.processed_pairs_max_size = 10000  # Keep last 10k
-        self.processed_pairs_max_age = 3600   # 1 hour
-        
-        # Other init...
-        
-    def _add_processed_pair(self, pair_address: str):
-        """Add pair to processed cache with size/age management"""
-        current_time = time.time()
-        
-        # Clean old entries if needed
-        if len(self.processed_pairs) >= self.processed_pairs_max_size:
-            self._cleanup_old_pairs(current_time)
-        
-        self.processed_pairs[pair_address] = current_time
-    
-    def _cleanup_old_pairs(self, current_time: float):
-        """Remove old entries to prevent memory leak"""
-        # Remove entries older than max_age
-        to_remove = [
-            addr for addr, ts in self.processed_pairs.items()
-            if current_time - ts > self.processed_pairs_max_age
-        ]
-        
-        for addr in to_remove:
-            del self.processed_pairs[addr]
-        
-        # If still too many, remove oldest 20%
-        if len(self.processed_pairs) >= self.processed_pairs_max_size:
-            sorted_pairs = sorted(
-                self.processed_pairs.items(), 
-                key=lambda x: x[1]
-            )
-            remove_count = len(sorted_pairs) // 5  # Remove 20%
-            for addr, _ in sorted_pairs[:remove_count]:
-                del self.processed_pairs[addr]
-    
-    def _is_already_processed(self, pair_address: str) -> bool:
-        """Check if pair was already processed"""
-        if pair_address in self.processed_pairs:
-            return True
-        return False
-
-# Update usage in _handle_new_pair:
-async def _handle_new_pair(self, pair_data: Dict):
-    """Verarbeitet neue Pair Events"""
-    if not pair_data:
-        return
-        
-    pair_address = pair_data.get('pairAddress', '')
-    if not pair_address or self._is_already_processed(pair_address):  # ✅ Use new method
-        return
-        
-    # ... rest of logic
-    
-    self._add_processed_pair(pair_address)  # ✅ Use new method
-```
-
-**Testing:**
-```python
-# Test memory management
-import pytest
-import time
-
-def test_processed_pairs_size_limit():
-    scanner = HighPerformanceScanner()
-    
-    # Add 20k pairs
-    for i in range(20000):
-        scanner._add_processed_pair(f"pair_{i}")
-    
-    # Should be capped at max_size
-    assert len(scanner.processed_pairs) <= scanner.processed_pairs_max_size
-    
-def test_processed_pairs_age_limit():
-    scanner = HighPerformanceScanner()
-    
-    # Add old pair
-    old_time = time.time() - 7200  # 2 hours ago
-    scanner.processed_pairs["old_pair"] = old_time
-    
-    # Add new pair (triggers cleanup)
-    scanner._add_processed_pair("new_pair")
-    
-    # Old pair should be removed
-    assert "old_pair" not in scanner.processed_pairs
-    assert "new_pair" in scanner.processed_pairs
-```
-
----
-
-### ISSUE #3: No Logging in Scanner (scanner.py)
-
-**Location:** `scanner.py`, throughout file  
-**Severity:** 🔴 **CRITICAL**  
-**Impact:** No debug info, hard to troubleshoot production issues
-
-**Problem:**
-```python
-# Lines 82, 95, 97, 124, etc.
-print(f"✅ WebSocket verbunden...")  # ❌ Using print instead of logging
-print(f"⚠️ WebSocket Verbindung geschlossen: {e}")
-print(f"❌ WebSocket Fehler: {e}")
-```
-
-**Solution:**
-```python
-import logging
-
-# At top of file
-logger = logging.getLogger(__name__)
-
-# Replace ALL print statements:
-
-# OLD:
-print(f"✅ WebSocket verbunden. Subscribing zu {len(subscribe_messages)} Events...")
-
-# NEW:
-logger.info(f"✅ WebSocket verbunden. Subscribing zu {len(subscribe_messages)} Events...")
-
-# OLD:
-print(f"⚠️ WebSocket Verbindung geschlossen: {e}")
-
-# NEW:
-logger.warning(f"⚠️ WebSocket Verbindung geschlossen: {e}")
-
-# OLD:
-print(f"❌ WebSocket Fehler: {e}")
-
-# NEW:
-logger.error(f"❌ WebSocket Fehler: {e}", exc_info=True)
-
-# OLD:
-print(f"""
-📊 Scanner Statistiken (1 Min):
-Empfangen: {self.stats['received']}
-...
-""")
-
-# NEW:
-logger.info(
-    f"📊 Scanner Stats: received={self.stats['received']}, "
-    f"processed={self.stats['processed']}, queue={self.processing_queue.qsize()}"
-)
-```
-
-**Complete replacement needed in scanner.py at lines:**
-- 82, 95, 97, 101, 124, 201, 226, 238-244, 252, 272
-
-**Testing:**
-```bash
-# Test logging works
-python -c "
-from scanner import scanner
-import logging
-logging.basicConfig(level=logging.DEBUG)
-# Should see log messages, not print
-"
-```
-
----
-
-### ISSUE #4: Unsafe Exception Handling (trader.py, analyzer.py)
-
-**Location:** Multiple files  
-**Severity:** 🔴 **CRITICAL**  
-**Impact:** Silent failures, swallowed errors
-
-**Problem:**
-```python
-# trader.py, line 172
-except:  # ❌ Bare except catches EVERYTHING including KeyboardInterrupt!
-    return None
-
-# analyzer.py, line 116
-except:  # ❌ Same issue
-    pass
-```
-
-**Solution:**
-```python
-# ALWAYS specify exception types!
-
-# OLD (trader.py line 172):
-async def _get_quote_safe(self, dex, input_mint: str, 
-                         output_mint: str, amount: int, 
-                         slippage_bps: int) -> Optional[Dict]:
-    """Get quote with error handling"""
-    try:
-        return await asyncio.wait_for(
-            dex.get_quote(input_mint, output_mint, amount, slippage_bps),
-            timeout=3.0
-        )
-    except:  # ❌ BAD!
-        return None
-
-# NEW:
-async def _get_quote_safe(self, dex, input_mint: str, 
-                         output_mint: str, amount: int, 
-                         slippage_bps: int) -> Optional[Dict]:
-    """Get quote with error handling"""
-    try:
-        return await asyncio.wait_for(
-            dex.get_quote(input_mint, output_mint, amount, slippage_bps),
-            timeout=3.0
-        )
-    except asyncio.TimeoutError:
-        logger.warning(f"Quote timeout from {dex.__class__.__name__}")
-        return None
-    except aiohttp.ClientError as e:
-        logger.warning(f"Network error getting quote: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Unexpected error in _get_quote_safe: {e}", exc_info=True)
-        return None
-
-# OLD (analyzer.py line 116):
-for backup_url in BACKUP_RPC_URLS[:2]:
-    try:
-        client = AsyncClient(backup_url)
-        async_clients.append(client)
-    except:  # ❌ BAD!
-        pass
-
-# NEW:
-for backup_url in BACKUP_RPC_URLS[:2]:
-    try:
-        client = AsyncClient(backup_url)
-        async_clients.append(client)
-    except (ConnectionError, TimeoutError) as e:
-        logger.warning(f"Could not connect to backup RPC {backup_url}: {e}")
-    except Exception as e:
-        logger.error(f"Unexpected error connecting to {backup_url}: {e}", exc_info=True)
-```
-
-**Find and replace ALL bare except clauses:**
-```bash
-# Find all instances
-grep -n "except:" *.py
-
-# Each one needs specific exception types
-```
-
-**Testing:**
-```python
-# Test that specific exceptions are caught
-def test_exception_handling():
-    # Should catch timeout
-    with pytest.raises(asyncio.TimeoutError):
-        await _get_quote_safe(...)
-    
-    # Should NOT catch KeyboardInterrupt
-    with pytest.raises(KeyboardInterrupt):
-        # simulate keyboard interrupt during function
-        ...
-```
-
----
-
-### ISSUE #5: Quote Cache Without TTL Cleanup (trader.py)
-
-**Location:** `trader.py`, lines 102, 118-122, 156-159  
-**Severity:** 🔴 **CRITICAL**  
-**Impact:** Stale quotes, memory leak
-
-**Problem:**
-```python
-# Line 102
-self.quote_cache = {}  # ❌ No size limit, no cleanup!
-
-# Line 118-122
-if cache_key in self.quote_cache:
-    cached = self.quote_cache[cache_key]
-    if time.time() - cached['timestamp'] < 5:
-        return cached['quote']
-    # ❌ Old entries never removed!
-```
-
-**Solution:**
-```python
-from collections import OrderedDict
-import time
-
-class SmartOrderRouter:
-    def __init__(self):
-        # ... other init
-        
-        # ✅ Use OrderedDict with size limit
-        self.quote_cache = OrderedDict()
-        self.quote_cache_max_size = 1000
-        self.quote_cache_ttl = 5  # seconds
-        
-    def _get_cached_quote(self, cache_key: str) -> Optional[Dict]:
-        """Get cached quote with TTL check"""
-        if cache_key not in self.quote_cache:
-            return None
-        
-        cached = self.quote_cache[cache_key]
-        
-        # Check if expired
-        if time.time() - cached['timestamp'] > self.quote_cache_ttl:
-            # Remove expired entry
-            del self.quote_cache[cache_key]
-            return None
-        
-        # Move to end (LRU)
-        self.quote_cache.move_to_end(cache_key)
-        return cached['quote']
-    
-    def _cache_quote(self, cache_key: str, quote: Dict):
-        """Cache quote with size management"""
-        # Remove oldest if at capacity
-        if len(self.quote_cache) >= self.quote_cache_max_size:
-            self.quote_cache.popitem(last=False)  # Remove oldest (FIFO)
-        
-        self.quote_cache[cache_key] = {
-            'quote': quote,
-            'timestamp': time.time()
-        }
-    
-    async def get_best_quote(self, input_mint: str, output_mint: str, 
-                            amount: int, slippage_bps: int = 100) -> Dict:
-        """Holt beste Quote von allen DEXs"""
-        cache_key = f"{input_mint}_{output_mint}_{amount}"
-        
-        # ✅ Use new cache methods
-        cached_quote = self._get_cached_quote(cache_key)
-        if cached_quote:
-            return cached_quote
-        
-        # ... get quotes logic ...
-        
-        # ✅ Use new cache method
-        self._cache_quote(cache_key, best_quote)
-        
-        return best_quote
-```
-
-**Testing:**
-```python
-def test_quote_cache_ttl():
-    router = SmartOrderRouter()
-    
-    # Cache a quote
-    router._cache_quote("test_key", {"amount": 100})
-    
-    # Should be cached
-    assert router._get_cached_quote("test_key") is not None
-    
-    # Wait for TTL
-    time.sleep(6)
-    
-    # Should be expired
-    assert router._get_cached_quote("test_key") is None
-
-def test_quote_cache_size_limit():
-    router = SmartOrderRouter()
-    
-    # Fill cache beyond limit
-    for i in range(1100):
-        router._cache_quote(f"key_{i}", {"amount": i})
-    
-    # Should be at max size
-    assert len(router.quote_cache) == router.quote_cache_max_size
-    
-    # Oldest entries should be gone
-    assert router._get_cached_quote("key_0") is None
-    assert router._get_cached_quote("key_1099") is not None
-```
-
----
-
-## 🟡 HIGH PRIORITY (SHOULD FIX)
-
-### ISSUE #6: Missing Rate Limiting for APIs
-
-**Location:** `analyzer.py`, `scanner.py`, `trader.py`  
-**Severity:** 🟡 **HIGH**  
-**Impact:** API bans, throttling, failed trades
-
-**Problem:**
-```python
-# No rate limiting on external API calls
-# Can easily exceed API limits and get banned
-```
-
-**Solution:**
-```python
-# Create new file: rate_limiter.py
-
-import asyncio
-import time
-from collections import deque
-from typing import Dict, Optional
-
-class RateLimiter:
-    """Token bucket rate limiter"""
-    
-    def __init__(self, calls_per_second: float):
-        self.rate = calls_per_second
-        self.tokens = calls_per_second
-        self.last_update = time.time()
-        self.lock = asyncio.Lock()
-    
-    async def acquire(self):
-        """Wait until a token is available"""
-        async with self.lock:
-            while True:
-                now = time.time()
-                elapsed = now - self.last_update
-                self.last_update = now
-                
-                # Add tokens based on elapsed time
-                self.tokens = min(
-                    self.rate,
-                    self.tokens + elapsed * self.rate
-                )
-                
-                if self.tokens >= 1:
-                    self.tokens -= 1
-                    return
-                
-                # Wait until next token
-                sleep_time = (1 - self.tokens) / self.rate
-                await asyncio.sleep(sleep_time)
-
-class APIRateLimiters:
-    """Global rate limiters for all APIs"""
-    
-    dexscreener = RateLimiter(calls_per_second=10)  # 10/sec
-    jupiter = RateLimiter(calls_per_second=10)      # 10/sec
-    rugcheck = RateLimiter(calls_per_second=2)      # 2/sec (stricter)
-    birdeye = RateLimiter(calls_per_second=5)       # 5/sec
-    solana_rpc = RateLimiter(calls_per_second=100)  # 100/sec
-
-# Usage in analyzer.py:
-from rate_limiter import APIRateLimiters
-
-async def _fetch_dexscreener_data(self, token_address: str) -> Optional[Dict]:
-    """Fetch with rate limiting"""
-    await APIRateLimiters.dexscreener.acquire()  # ✅ Wait for rate limit
-    
-    async with self.session.get(
-        DEXSCREENER_API.format(token_address)
-    ) as response:
-        if response.status == 200:
-            return await response.json()
-    return None
-
-# Same pattern for all API calls
-async def _check_rugcheck(self, token_address: str) -> Dict:
-    """Check with rate limiting"""
-    await APIRateLimiters.rugcheck.acquire()  # ✅ Wait for rate limit
-    
-    async with self.session.get(
-        RUGCHECK_API_URL.format(token_address)
-    ) as response:
-        # ... rest of logic
-```
-
-**Testing:**
-```python
-import time
-
-async def test_rate_limiter():
-    limiter = RateLimiter(calls_per_second=10)
-    
-    # Should allow 10 calls quickly
-    start = time.time()
-    for _ in range(10):
-        await limiter.acquire()
-    elapsed = time.time() - start
-    assert elapsed < 0.1  # Should be nearly instant
-    
-    # 11th call should be delayed
-    start = time.time()
-    await limiter.acquire()
-    elapsed = time.time() - start
-    assert elapsed >= 0.09  # ~0.1 second wait
-
-async def test_rate_limiter_sustained():
-    limiter = RateLimiter(calls_per_second=5)
-    
-    # Make 50 calls
-    start = time.time()
-    for _ in range(50):
-        await limiter.acquire()
-    elapsed = time.time() - start
-    
-    # Should take ~10 seconds at 5/sec
-    assert 9.5 <= elapsed <= 10.5
-```
-
-**Add to all API-calling functions in:**
-- `analyzer.py`: Lines where API calls happen
-- `trader.py`: Jupiter API calls
-- `scanner.py`: DexScreener API calls
-
----
-
-### ISSUE #7: No Connection Pooling for RPC (analyzer.py)
-
-**Location:** `analyzer.py`, lines 110-116  
-**Severity:** 🟡 **HIGH**  
-**Impact:** Slow performance, connection exhaustion
-
-**Problem:**
-```python
-# Line 110-116
-# Creating new clients without proper pooling
-async_clients = [AsyncClient(RPC_URL)]
-for backup_url in BACKUP_RPC_URLS[:2]:
-    try:
-        client = AsyncClient(backup_url)
-        async_clients.append(client)
-    except:
-        pass
-```
-
-**Solution:**
-```python
-# Proper connection pooling
-
-from solana.rpc.async_api import AsyncClient
-from solana.rpc.commitment import Confirmed
-import asyncio
-
-class RPCConnectionPool:
-    """Connection pool for Solana RPC clients"""
-    
-    def __init__(self, endpoints: List[str], pool_size: int = 5):
-        self.endpoints = endpoints
-        self.pool_size = pool_size
-        self.pools: Dict[str, List[AsyncClient]] = {}
-        self.current_endpoint_idx = 0
-        self.lock = asyncio.Lock()
-        
-    async def initialize(self):
-        """Initialize connection pools for all endpoints"""
-        for endpoint in self.endpoints:
-            self.pools[endpoint] = []
-            for _ in range(self.pool_size):
-                try:
-                    client = AsyncClient(endpoint, commitment=Confirmed)
-                    self.pools[endpoint].append(client)
-                except Exception as e:
-                    logger.error(f"Failed to create client for {endpoint}: {e}")
-        
-        # Remove endpoints with no working clients
-        self.pools = {k: v for k, v in self.pools.items() if v}
-        
-        if not self.pools:
-            raise Exception("No working RPC endpoints!")
-        
-        logger.info(f"Initialized RPC pool with {len(self.pools)} endpoints")
-    
-    async def get_client(self) -> AsyncClient:
-        """Get next available client (round-robin)"""
-        async with self.lock:
-            if not self.pools:
-                raise Exception("No available RPC clients!")
-            
-            # Get endpoints list
-            endpoints = list(self.pools.keys())
-            
-            # Round-robin selection
-            endpoint = endpoints[self.current_endpoint_idx % len(endpoints)]
-            self.current_endpoint_idx += 1
-            
-            # Get random client from pool
-            clients = self.pools[endpoint]
-            return clients[self.current_endpoint_idx % len(clients)]
-    
-    async def close(self):
-        """Close all connections"""
-        for endpoint, clients in self.pools.items():
-            for client in clients:
-                try:
-                    await client.close()
-                except:
-                    pass
-
-# Usage in analyzer.py:
-
-class EnhancedAnalyzer:
-    def __init__(self):
-        self.session: Optional[aiohttp.ClientSession] = None
-        self.rpc_pool: Optional[RPCConnectionPool] = None
-        self.init_task = asyncio.create_task(self._initialize())
-    
-    async def _initialize(self):
-        """Initialize with connection pool"""
-        # Setup RPC pool
-        endpoints = [RPC_URL] + BACKUP_RPC_URLS[:2]
-        self.rpc_pool = RPCConnectionPool(endpoints, pool_size=5)
-        await self.rpc_pool.initialize()
-        
-        # Setup HTTP session
-        self.session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=5),
-            connector=aiohttp.TCPConnector(
-                limit=100,
-                limit_per_host=30,
-                ttl_dns_cache=300
-            )
-        )
-    
-    async def _get_token_account_info(self, token_address: str) -> Optional[Dict]:
-        """Get token info using connection pool"""
-        client = await self.rpc_pool.get_client()  # ✅ Use pool
-        
-        try:
-            pubkey = Pubkey.from_string(token_address)
-            response = await client.get_account_info(pubkey)
-            return response.value
-        except Exception as e:
-            logger.error(f"Error getting token account: {e}")
-            return None
-    
-    async def cleanup(self):
-        """Cleanup resources"""
-        if self.session:
-            await self.session.close()
-        
-        if self.rpc_pool:
-            await self.rpc_pool.close()
-```
-
-**Testing:**
-```python
-async def test_rpc_pool():
-    endpoints = [
-        "https://api.mainnet-beta.solana.com",
-        "https://solana-api.projectserum.com"
-    ]
-    
-    pool = RPCConnectionPool(endpoints, pool_size=3)
-    await pool.initialize()
-    
-    # Should have clients
-    assert len(pool.pools) > 0
-    
-    # Should return clients in round-robin
-    clients = []
-    for _ in range(10):
-        client = await pool.get_client()
-        clients.append(client)
-    
-    # Should cycle through available clients
-    assert len(set(id(c) for c in clients)) > 1
-    
-    await pool.close()
-```
-
----
-
-### ISSUE #8: Missing Input Validation (config.py, trader.py)
-
-**Location:** Multiple files  
-**Severity:** 🟡 **HIGH**  
-**Impact:** Invalid configs, crashes, security issues
-
-**Problem:**
-```python
-# config.py - No validation of values
-MIN_LIQUIDITY_USD: float = 5000  # What if negative?
-MAX_LIQUIDITY_USD: float = 500000  # What if < MIN?
-
-# trader.py - No validation of inputs
-async def get_best_quote(self, input_mint: str, output_mint: str, 
-                        amount: int, slippage_bps: int = 100):
-    # What if amount is negative?
-    # What if slippage_bps > 10000 (100%)?
-```
-
-**Solution:**
-```python
-# Create validation module: validators.py
-
-from typing import Any, Optional
-import re
-
-class ValidationError(Exception):
-    """Custom validation error"""
-    pass
-
-class Validators:
-    """Input validation utilities"""
-    
-    @staticmethod
-    def validate_positive(value: float, name: str) -> float:
-        """Validate positive number"""
-        if value <= 0:
-            raise ValidationError(f"{name} must be positive, got {value}")
-        return value
-    
-    @staticmethod
-    def validate_range(value: float, min_val: float, max_val: float, 
-                      name: str) -> float:
-        """Validate value in range"""
-        if not min_val <= value <= max_val:
-            raise ValidationError(
-                f"{name} must be between {min_val} and {max_val}, got {value}"
-            )
-        return value
-    
-    @staticmethod
-    def validate_solana_address(address: str) -> str:
-        """Validate Solana address format"""
-        if not address or not isinstance(address, str):
-            raise ValidationError("Address must be non-empty string")
-        
-        # Solana addresses are base58, 32-44 chars
-        if not 32 <= len(address) <= 44:
-            raise ValidationError(f"Invalid address length: {len(address)}")
-        
-        # Check base58 characters
-        base58_pattern = re.compile(r'^[1-9A-HJ-NP-Za-km-z]+$')
-        if not base58_pattern.match(address):
-            raise ValidationError("Invalid base58 format")
-        
-        return address
-    
-    @staticmethod
-    def validate_percentage(value: float, name: str) -> float:
-        """Validate percentage (0-100)"""
-        return Validators.validate_range(value, 0, 100, name)
-    
-    @staticmethod
-    def validate_bps(value: int, name: str) -> int:
-        """Validate basis points (0-10000)"""
-        return int(Validators.validate_range(value, 0, 10000, name))
-
-# Update config.py with validation:
-
-from validators import Validators, ValidationError
-
-@dataclass
-class ScannerFilters:
-    # Stufe 1: Basis-Filter
-    MIN_LIQUIDITY_USD: float = 5000
-    MAX_LIQUIDITY_USD: float = 500000
-    
-    def __post_init__(self):
-        """Validate configuration"""
-        # Validate positive values
-        self.MIN_LIQUIDITY_USD = Validators.validate_positive(
-            self.MIN_LIQUIDITY_USD, "MIN_LIQUIDITY_USD"
-        )
-        self.MAX_LIQUIDITY_USD = Validators.validate_positive(
-            self.MAX_LIQUIDITY_USD, "MAX_LIQUIDITY_USD"
-        )
-        
-        # Validate MIN < MAX
-        if self.MIN_LIQUIDITY_USD >= self.MAX_LIQUIDITY_USD:
-            raise ValidationError(
-                f"MIN_LIQUIDITY_USD ({self.MIN_LIQUIDITY_USD}) must be < "
-                f"MAX_LIQUIDITY_USD ({self.MAX_LIQUIDITY_USD})"
-            )
-        
-        # Validate ranges
-        self.MIN_AGE_MINUTES = Validators.validate_positive(
-            self.MIN_AGE_MINUTES, "MIN_AGE_MINUTES"
-        )
-        self.MAX_TOP_10_PERCENTAGE = Validators.validate_percentage(
-            self.MAX_TOP_10_PERCENTAGE, "MAX_TOP_10_PERCENTAGE"
-        )
-
-# Update trader.py with validation:
-
-from validators import Validators, ValidationError
-
-async def get_best_quote(self, input_mint: str, output_mint: str, 
-                        amount: int, slippage_bps: int = 100) -> Dict:
-    """Get best quote with input validation"""
-    
-    # ✅ Validate inputs
-    try:
-        input_mint = Validators.validate_solana_address(input_mint)
-        output_mint = Validators.validate_solana_address(output_mint)
-        amount = int(Validators.validate_positive(amount, "amount"))
-        slippage_bps = Validators.validate_bps(slippage_bps, "slippage_bps")
-    except ValidationError as e:
-        logger.error(f"Invalid input to get_best_quote: {e}")
-        raise
-    
-    # ... rest of logic
-```
-
-**Testing:**
-```python
-import pytest
-
-def test_validators():
-    # Test positive validation
-    assert Validators.validate_positive(5.0, "test") == 5.0
-    with pytest.raises(ValidationError):
-        Validators.validate_positive(-5.0, "test")
-    
-    # Test range validation
-    assert Validators.validate_range(50, 0, 100, "test") == 50
-    with pytest.raises(ValidationError):
-        Validators.validate_range(150, 0, 100, "test")
-    
-    # Test Solana address
-    valid_addr = "So11111111111111111111111111111111111111112"
-    assert Validators.validate_solana_address(valid_addr) == valid_addr
-    
-    with pytest.raises(ValidationError):
-        Validators.validate_solana_address("invalid")
-    
-    # Test BPS
-    assert Validators.validate_bps(100, "slippage") == 100
-    with pytest.raises(ValidationError):
-        Validators.validate_bps(11000, "slippage")
-
-def test_config_validation():
-    # Valid config
-    config = ScannerFilters(
-        MIN_LIQUIDITY_USD=5000,
-        MAX_LIQUIDITY_USD=500000
+    # solders may require just the secret bytes for Keypair.from_bytes
+    # or may need to derive public key first
+    from solders.keypair import Keypair
+    keypair = Keypair.from_bytes(secret_bytes)  # Check solders documentation
+    return True, f"Valid wallet: {str(keypair.pubkey())}"
+except Exception as e:
+    return False, f"Cannot create keypair: {e}"
+Alternatively, if the library provides a from_seed or similar method, use that instead.
+
+🧰 Tools
+🤖 Prompt for AI Agents
+@0xxCool	Reply...
+setup.sh
+Comment on lines +1 to +825
+#!/bin/bash
+# ==============================================================================
+# Solana Meme Coin Trading Bot - Automated Setup Script
+# ==============================================================================
+# This script automates the complete setup process for the trading bot
+# ==============================================================================
+
+set -e  # Exit on any error
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# ==============================================================================
+# HELPER FUNCTIONS
+# ==============================================================================
+
+print_header() {
+    echo -e "\n${BLUE}=====================================================================${NC}"
+    echo -e "${BLUE}  $1${NC}"
+    echo -e "${BLUE}=====================================================================${NC}\n"
+}
+
+print_success() {
+    echo -e "${GREEN}✅ $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}❌ $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+}
+
+print_info() {
+    echo -e "${BLUE}ℹ️  $1${NC}"
+}
+
+# ==============================================================================
+# SYSTEM CHECKS
+# ==============================================================================
+
+check_system() {
+    print_header "STEP 1: System Requirements Check"
+
+    # Check Python version
+    if command -v python3 &> /dev/null; then
+        PYTHON_VERSION=$(python3 --version | awk '{print $2}')
+        PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
+        PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
+
+        if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -ge 10 ]; then
+            print_success "Python $PYTHON_VERSION (>= 3.10 required)"
+        else
+            print_error "Python 3.10+ required, found $PYTHON_VERSION"
+            exit 1
+        fi
+    else
+        print_error "Python 3 not found. Please install Python 3.10+"
+        exit 1
+    fi
+
+    # Check pip
+    if command -v pip3 &> /dev/null; then
+        print_success "pip3 installed"
+    else
+        print_error "pip3 not found. Please install pip3"
+        exit 1
+    fi
+
+    # Check git
+    if command -v git &> /dev/null; then
+        print_success "git installed"
+    else
+        print_warning "git not found - version control unavailable"
+    fi
+
+    # Check available disk space (need at least 2GB for dependencies)
+    AVAILABLE_SPACE=$(df . | tail -1 | awk '{print $4}')
+    if [ "$AVAILABLE_SPACE" -gt 2000000 ]; then
+        print_success "Sufficient disk space available"
+    else
+        print_warning "Low disk space - may cause issues during installation"
+    fi
+
+    # Check internet connectivity
+    if ping -c 1 google.com &> /dev/null; then
+        print_success "Internet connection available"
+    else
+        print_error "No internet connection - required for package installation"
+        exit 1
+    fi
+}
+
+# ==============================================================================
+# VIRTUAL ENVIRONMENT
+# ==============================================================================
+
+setup_venv() {
+    print_header "STEP 2: Virtual Environment Setup"
+
+    if [ -d "venv" ]; then
+        print_warning "Virtual environment already exists"
+        read -p "Remove and recreate? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            rm -rf venv
+            print_info "Removed old virtual environment"
+        else
+            print_info "Using existing virtual environment"
+            return
+        fi
+    fi
+
+    print_info "Creating virtual environment..."
+    python3 -m venv venv
+    print_success "Virtual environment created"
+
+    # Activate venv
+    source venv/bin/activate
+    print_success "Virtual environment activated"
+
+    # Upgrade pip
+    print_info "Upgrading pip..."
+    pip install --upgrade pip setuptools wheel
+    print_success "pip upgraded"
+}
+
+# ==============================================================================
+# DEPENDENCIES INSTALLATION
+# ==============================================================================
+
+install_dependencies() {
+    print_header "STEP 3: Installing Dependencies"
+
+    if [ ! -f "requirements.txt" ]; then
+        print_error "requirements.txt not found!"
+        exit 1
+    fi
+
+    print_info "This may take 5-10 minutes..."
+    print_info "Installing packages from requirements.txt..."
+
+    # Install with progress
+    pip install -r requirements.txt --no-cache-dir
+
+    if [ $? -eq 0 ]; then
+        print_success "All dependencies installed successfully"
+    else
+        print_error "Failed to install dependencies"
+        exit 1
+    fi
+
+    # Verify critical packages
+    print_info "Verifying critical packages..."
+
+    CRITICAL_PACKAGES=(
+        "solana"
+        "solders"
+        "telegram"
+        "aiohttp"
+        "websockets"
+        "pandas"
+        "numpy"
     )
-    assert config.MIN_LIQUIDITY_USD == 5000
-    
-    # Invalid: MIN > MAX
-    with pytest.raises(ValidationError):
-        config = ScannerFilters(
-            MIN_LIQUIDITY_USD=600000,
-            MAX_LIQUIDITY_USD=500000
-        )
-```
 
----
+    for package in "${CRITICAL_PACKAGES[@]}"; do
+        if pip show "$package" &> /dev/null; then
+            VERSION=$(pip show "$package" | grep Version | awk '{print $2}')
+            print_success "$package: $VERSION"
+        else
+            print_error "$package not installed"
+        fi
+    done
+}
 
-### ISSUE #9: No Graceful Shutdown for Workers (scanner.py)
+# ==============================================================================
+# ENVIRONMENT CONFIGURATION
+# ==============================================================================
 
-**Location:** `scanner.py`, lines 250-259  
-**Severity:** 🟡 **HIGH**  
-**Impact:** Data loss, incomplete operations
+setup_env_file() {
+    print_header "STEP 4: Environment Configuration"
 
-**Problem:**
-```python
-# Lines 250-259
-async def stop(self):
-    """Stoppt Scanner sauber"""
-    print("🛑 Stopping Scanner...")
-    self.running = False
-    
-    # Warte auf Worker
-    for worker in self.workers:
-        worker.cancel()  # ❌ Abrupt cancellation, no cleanup!
-        
-    await asyncio.gather(*self.workers, return_exceptions=True)
-```
+    if [ -f ".env" ]; then
+        print_warning ".env file already exists"
+        read -p "Overwrite? (y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            print_info "Keeping existing .env file"
+            return
+        fi
+    fi
 
-**Solution:**
-```python
-async def stop(self, timeout: float = 10.0):
-    """Gracefully stop scanner"""
-    logger.info("🛑 Initiating graceful shutdown...")
-    
-    # Step 1: Stop accepting new work
-    self.running = False
-    
-    # Step 2: Wait for workers to finish current tasks
-    logger.info(f"Waiting for {len(self.workers)} workers to finish (timeout: {timeout}s)...")
-    
-    try:
-        # Give workers time to finish current tasks
-        await asyncio.wait_for(
-            asyncio.gather(*self.workers, return_exceptions=True),
-            timeout=timeout
-        )
-        logger.info("✅ All workers finished gracefully")
-        
-    except asyncio.TimeoutError:
-        logger.warning(f"⚠️ Workers did not finish in {timeout}s, forcing shutdown")
-        
-        # Step 3: Force cancel if timeout
-        for worker in self.workers:
-            if not worker.done():
-                worker.cancel()
-        
-        # Wait for cancellations
-        await asyncio.gather(*self.workers, return_exceptions=True)
-    
-    # Step 4: Process remaining queue items
-    remaining = self.processing_queue.qsize()
-    if remaining > 0:
-        logger.warning(f"⚠️ {remaining} items left in queue (not processed)")
-        
-        # Optionally: save to database for later processing
-        # await self._save_pending_items()
-    
-    # Step 5: Cleanup
-    await analyzer.cleanup()
-    
-    logger.info("✅ Scanner stopped cleanly")
+    if [ ! -f ".env.example" ]; then
+        print_error ".env.example not found!"
+        exit 1
+    fi
 
-# Update worker to handle shutdown signal:
-async def _process_worker(self, worker_name: str):
-    """Worker Thread mit graceful shutdown"""
-    logger.info(f"🚀 {worker_name} gestartet")
-    
-    try:
-        while self.running:
-            try:
-                # Shorter timeout to check self.running more frequently
-                priority_pair = await asyncio.wait_for(
-                    self.processing_queue.get(), 
-                    timeout=0.5  # ✅ Reduced from 1.0
-                )
-                
-                # Check if still running before processing
-                if not self.running:
-                    logger.info(f"{worker_name} stopping, putting item back in queue")
-                    await self.processing_queue.put(priority_pair)
-                    break
-                
-                # Process item
-                start_time = time.time()
-                
-                try:
-                    from integration import process_token
-                    await process_token(priority_pair.pair_data)
-                except ImportError:
-                    await analyzer.analyze_streamed_pair(priority_pair.pair_data)
-                
-                process_time = time.time() - start_time
-                self.stats['processed'] += 1
-                
-                if process_time > 1:
-                    logger.warning(f"⚠️ Langsame Analyse: {process_time:.2f}s")
-                
-            except asyncio.TimeoutError:
-                continue
-            except asyncio.CancelledError:
-                logger.info(f"{worker_name} cancelled")
-                break
-            except Exception as e:
-                logger.error(f"Worker {worker_name} error: {e}", exc_info=True)
-    
-    finally:
-        logger.info(f"👋 {worker_name} shut down")
-```
+    cp .env.example .env
+    print_success ".env file created from template"
 
-**Testing:**
-```python
-async def test_graceful_shutdown():
-    scanner = HighPerformanceScanner()
-    
-    # Start scanner
-    start_task = asyncio.create_task(scanner.start())
-    await asyncio.sleep(1)  # Let it run
-    
-    # Add some items to queue
-    for i in range(10):
-        await scanner.processing_queue.put(
-            PriorityPair(priority=1.0, pair_data={'test': i})
-        )
-    
-    # Stop gracefully
-    await scanner.stop(timeout=5.0)
-    
-    # All workers should be done
-    for worker in scanner.workers:
-        assert worker.done()
-    
-    # Should have processed some items
-    assert scanner.stats['processed'] > 0
-```
+    print_info "\n${YELLOW}⚠️  IMPORTANT: You must configure the following variables in .env:${NC}"
+    echo ""
+    echo "  1. PRIVATE_KEY         - Your Solana wallet private key (Base58)"
+    echo "  2. TELEGRAM_BOT_TOKEN  - Get from @BotFather on Telegram"
+    echo "  3. TELEGRAM_CHAT_ID    - Get from @userinfobot on Telegram"
+    echo "  4. RPC_URL             - Solana RPC endpoint (default is free but slow)"
+    echo ""
 
----
+    read -p "Would you like to configure now? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        configure_env_interactive
+    else
+        print_warning "Remember to configure .env before running the bot!"
+    fi
+}
 
-## 🟢 MEDIUM PRIORITY (NICE TO HAVE)
+configure_env_interactive() {
+    print_info "\n${BLUE}Starting interactive configuration...${NC}\n"
 
-### ISSUE #10: Missing Metrics Collection
+    # Private Key
+    echo -e "${YELLOW}1. PRIVATE_KEY${NC}"
+    echo "   Options:"
+    echo "   a) I have a private key"
+    echo "   b) Generate a new wallet for me"
+    echo "   c) Skip (configure manually later)"
+    read -p "   Choice (a/b/c): " -n 1 -r
+    echo
 
-**Location:** All modules  
-**Severity:** 🟢 **MEDIUM**  
-**Impact:** No performance insights, hard to optimize
+    if [[ $REPLY =~ ^[Aa]$ ]]; then
+        read -p "   Enter your Base58 private key: " PRIVATE_KEY
+        sed -i "s|PRIVATE_KEY=\"YOUR_BASE58_PRIVATE_KEY_HERE\"|PRIVATE_KEY=\"$PRIVATE_KEY\"|" .env
+        print_success "Private key configured"
+    elif [[ $REPLY =~ ^[Bb]$ ]]; then
+        generate_wallet
+    else
+        print_warning "Private key skipped - configure manually"
+    fi
 
-**Solution:**
-```python
-# Create metrics.py
+    # Telegram Bot Token
+    echo -e "\n${YELLOW}2. TELEGRAM_BOT_TOKEN${NC}"
+    echo "   Get from: @BotFather on Telegram"
+    echo "   Send: /newbot and follow instructions"
+    read -p "   Enter token (or press Enter to skip): " TELEGRAM_TOKEN
 
-from prometheus_client import Counter, Histogram, Gauge, Summary
-import time
-from functools import wraps
+    if [ ! -z "$TELEGRAM_TOKEN" ]; then
+        sed -i "s|TELEGRAM_BOT_TOKEN=\".*\"|TELEGRAM_BOT_TOKEN=\"$TELEGRAM_TOKEN\"|" .env
+        print_success "Telegram bot token configured"
+    else
+        print_warning "Telegram token skipped"
+    fi
+
+    # Telegram Chat ID
+    echo -e "\n${YELLOW}3. TELEGRAM_CHAT_ID${NC}"
+    echo "   Get from: @userinfobot on Telegram"
+    echo "   Send: /start"
+    read -p "   Enter chat ID (or press Enter to skip): " CHAT_ID
+
+    if [ ! -z "$CHAT_ID" ]; then
+        sed -i "s|TELEGRAM_CHAT_ID=\".*\"|TELEGRAM_CHAT_ID=\"$CHAT_ID\"|" .env
+        print_success "Telegram chat ID configured"
+    else
+        print_warning "Chat ID skipped"
+    fi
+
+    # RPC URL
+    echo -e "\n${YELLOW}4. RPC_URL${NC}"
+    echo "   Options:"
+    echo "   a) Use free RPC (slow, not recommended for production)"
+    echo "   b) Enter Helius API key (recommended - free tier available)"
+    echo "   c) Enter Alchemy API key"
+    echo "   d) Enter custom RPC URL"
+    echo "   e) Skip (use default)"
+    read -p "   Choice (a/b/c/d/e): " -n 1 -r
+    echo
+
+    case $REPLY in
+        [Bb])
+            read -p "   Enter Helius API key: " HELIUS_KEY
+            sed -i "s|RPC_URL=\".*\"|RPC_URL=\"https://mainnet.helius-rpc.com/?api-key=$HELIUS_KEY\"|" .env
+            print_success "Helius RPC configured"
+            ;;
+        [Cc])
+            read -p "   Enter Alchemy API key: " ALCHEMY_KEY
+            sed -i "s|RPC_URL=\".*\"|RPC_URL=\"https://solana-mainnet.g.alchemy.com/v2/$ALCHEMY_KEY\"|" .env
+            print_success "Alchemy RPC configured"
+            ;;
+        [Dd])
+            read -p "   Enter custom RPC URL: " CUSTOM_RPC
+            sed -i "s|RPC_URL=\".*\"|RPC_URL=\"$CUSTOM_RPC\"|" .env
+            print_success "Custom RPC configured"
+            ;;
+        *)
+            print_info "Using default free RPC"
+            ;;
+    esac
+
+    print_success "\n✅ Environment configuration complete!"
+}
+
+# ==============================================================================
+# WALLET GENERATION
+# ==============================================================================
+
+generate_wallet() {
+    print_info "Generating new Solana wallet..."
+
+    # Create Python script to generate wallet
+    python3 << 'PYTHON_SCRIPT'
+from solders.keypair import Keypair
+import base58
+import json
+import os
+
+# Generate new keypair
+keypair = Keypair()
+public_key = str(keypair.pubkey())
+secret_key = base58.b58encode(bytes(keypair)[:32]).decode()
+
+print("\n" + "="*70)
+print("  🎉 NEW WALLET GENERATED")
+print("="*70)
+print(f"\n📍 Public Address (send SOL here):")
+print(f"   {public_key}")
+print(f"\n🔑 Private Key (keep secret!):")
+print(f"   {secret_key}")
+print("\n" + "="*70)
+print("\n⚠️  IMPORTANT:")
+print("   1. This is a BURNER wallet - use only for trading bot")
+print("   2. Send 1-2 SOL to the public address above")
+print("   3. NEVER share your private key!")
+print("   4. Save this information in a safe place")
+print("="*70 + "\n")
+
+# Save to .env
+with open('.env', 'r') as f:
+    content = f.read()
+
+content = content.replace(
+    'PRIVATE_KEY="YOUR_BASE58_PRIVATE_KEY_HERE"',
+    f'PRIVATE_KEY="{secret_key}"'
+)
+
+with open('.env', 'w') as f:
+    f.write(content)
+
+print("✅ Private key automatically saved to .env file\n")
+PYTHON_SCRIPT
+
+    if [ $? -eq 0 ]; then
+        print_success "Wallet generated and configured"
+        read -p "Press Enter to continue..."
+    else
+        print_error "Failed to generate wallet"
+    fi
+}
+
+# ==============================================================================
+# DATABASE SETUP
+# ==============================================================================
+
+setup_database() {
+    print_header "STEP 5: Database Setup"
+
+    if [ -f "trades.db" ]; then
+        print_warning "Database already exists"
+        read -p "Reset database? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            rm trades.db
+            print_info "Old database removed"
+        else
+            print_info "Keeping existing database"
+            return
+        fi
+    fi
+
+    print_info "Initializing database..."
+
+    python3 << 'PYTHON_SCRIPT'
 import asyncio
+import sys
 
-# Define metrics
-TOKENS_SCANNED = Counter(
-    'tokens_scanned_total',
-    'Total tokens scanned',
-    ['status']  # labels: found, filtered, analyzed
-)
-
-TRADES_EXECUTED = Counter(
-    'trades_executed_total',
-    'Total trades executed',
-    ['action', 'result']  # action: buy/sell, result: success/failure
-)
-
-ANALYSIS_DURATION = Histogram(
-    'token_analysis_duration_seconds',
-    'Time spent analyzing tokens',
-    buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
-)
-
-ACTIVE_POSITIONS = Gauge(
-    'active_positions_count',
-    'Current number of open positions'
-)
-
-WALLET_BALANCE = Gauge(
-    'wallet_balance_sol',
-    'Current wallet balance in SOL'
-)
-
-RPC_LATENCY = Summary(
-    'rpc_request_latency_seconds',
-    'RPC request latency'
-)
-
-def track_duration(metric: Histogram):
-    """Decorator to track function duration"""
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            start = time.time()
-            try:
-                result = await func(*args, **kwargs)
-                return result
-            finally:
-                duration = time.time() - start
-                metric.observe(duration)
-        return wrapper
-    return decorator
-
-# Usage in analyzer.py:
-from metrics import TOKENS_SCANNED, ANALYSIS_DURATION, track_duration
-
-@track_duration(ANALYSIS_DURATION)
-async def analyze_token(self, pair_data: Dict) -> Optional[EnhancedTokenMetrics]:
-    """Analyze with metrics"""
-    
-    # ... analysis logic ...
-    
-    if not result:
-        TOKENS_SCANNED.labels(status='filtered').inc()
-        return None
-    
-    TOKENS_SCANNED.labels(status='analyzed').inc()
-    return result
-
-# Usage in trader.py:
-from metrics import TRADES_EXECUTED, ACTIVE_POSITIONS, WALLET_BALANCE
-
-async def execute_buy(self, token_address: str, amount: float):
-    """Execute buy with metrics"""
+async def init_db():
     try:
-        # ... buy logic ...
-        
-        TRADES_EXECUTED.labels(action='buy', result='success').inc()
-        ACTIVE_POSITIONS.inc()
-        
-        # Update balance
-        balance = await self.get_balance()
-        WALLET_BALANCE.set(balance)
-        
+        from database import TradeDatabase
+        db = TradeDatabase()
+        await db.initialize()
+        await db.conn.close()
+        print("✅ Database initialized successfully")
+        return 0
     except Exception as e:
-        TRADES_EXECUTED.labels(action='buy', result='failure').inc()
-        raise
-```
+        print(f"❌ Database initialization failed: {e}")
+        return 1
 
----
+sys.exit(asyncio.run(init_db()))
+PYTHON_SCRIPT
 
-### ISSUE #11: No Retry Logic for Critical Operations
+    if [ $? -eq 0 ]; then
+        print_success "Database ready"
+    else
+        print_error "Database setup failed"
+    fi
+}
 
-**Location:** `trader.py`, `analyzer.py`  
-**Severity:** 🟢 **MEDIUM**  
-**Impact:** Transient failures cause missed opportunities
+# ==============================================================================
+# VALIDATION & TESTING
+# ==============================================================================
 
-**Solution:**
-```python
-# Create retry.py
+validate_setup() {
+    print_header "STEP 6: Validation & Testing"
 
-import asyncio
-import logging
-from functools import wraps
-from typing import TypeVar, Callable, Any, Optional, Tuple, Type
+    print_info "Running syntax checks..."
 
-logger = logging.getLogger(__name__)
+    MODULES=(
+        "main.py"
+        "config.py"
+        "trader.py"
+        "scanner.py"
+        "analyzer.py"
+        "telegram_bot.py"
+    )
 
-T = TypeVar('T')
+    for module in "${MODULES[@]}"; do
+        if python3 -m py_compile "$module" 2>/dev/null; then
+            print_success "$module: Syntax OK"
+        else
+            print_error "$module: Syntax Error"
+        fi
+    done
 
-async def retry_async(
-    func: Callable[..., T],
-    max_attempts: int = 3,
-    delay: float = 1.0,
-    backoff: float = 2.0,
-    exceptions: Tuple[Type[Exception], ...] = (Exception,),
-    on_retry: Optional[Callable[[Exception, int], None]] = None
-) -> T:
-    """
-    Retry async function with exponential backoff
-    
-    Args:
-        func: Async function to retry
-        max_attempts: Maximum retry attempts
-        delay: Initial delay between retries (seconds)
-        backoff: Backoff multiplier
-        exceptions: Tuple of exceptions to catch
-        on_retry: Callback function(exception, attempt_number)
-    """
-    attempt = 0
-    current_delay = delay
-    
-    while attempt < max_attempts:
-        try:
-            return await func()
-        except exceptions as e:
-            attempt += 1
-            
-            if attempt >= max_attempts:
-                logger.error(f"Max retries ({max_attempts}) exceeded for {func.__name__}")
-                raise
-            
-            if on_retry:
-                on_retry(e, attempt)
-            else:
-                logger.warning(
-                    f"Retry {attempt}/{max_attempts} for {func.__name__} after {e}"
-                )
-            
-            await asyncio.sleep(current_delay)
-            current_delay *= backoff
+    print_info "\nChecking imports..."
 
-def retry(max_attempts: int = 3, delay: float = 1.0, 
-         backoff: float = 2.0, 
-         exceptions: Tuple[Type[Exception], ...] = (Exception,)):
-    """Decorator for retry logic"""
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            async def _func():
-                return await func(*args, **kwargs)
-            
-            return await retry_async(
-                _func,
-                max_attempts=max_attempts,
-                delay=delay,
-                backoff=backoff,
-                exceptions=exceptions
-            )
-        return wrapper
-    return decorator
+    python3 << 'PYTHON_SCRIPT'
+import sys
 
-# Usage in trader.py:
-from retry import retry
-import aiohttp
+required_modules = [
+    ('solana', 'Solana SDK'),
+    ('solders', 'Solana Data Structures'),
+    ('telegram', 'Telegram Bot'),
+    ('aiohttp', 'Async HTTP'),
+    ('websockets', 'WebSocket'),
+    ('pandas', 'Data Analysis'),
+    ('numpy', 'Numerical Computing'),
+]
 
-@retry(
-    max_attempts=3,
-    delay=0.5,
-    backoff=2.0,
-    exceptions=(aiohttp.ClientError, asyncio.TimeoutError)
-)
-async def _fetch_jupiter_quote(self, input_mint: str, output_mint: str, 
-                               amount: int) -> Dict:
-    """Fetch Jupiter quote with retry"""
-    async with self.session.get(
-        JUPITER_QUOTE_API,
-        params={
-            'inputMint': input_mint,
-            'outputMint': output_mint,
-            'amount': amount
-        }
-    ) as response:
-        response.raise_for_status()
-        return await response.json()
-
-# Usage in analyzer.py:
-@retry(max_attempts=2, delay=1.0)
-async def _fetch_token_metadata(self, token_address: str) -> Optional[Dict]:
-    """Fetch metadata with retry"""
-    # ... fetch logic ...
-```
-
-**Testing:**
-```python
-async def test_retry_success_after_failures():
-    call_count = 0
-    
-    async def flaky_function():
-        nonlocal call_count
-        call_count += 1
-        if call_count < 3:
-            raise Exception("Temporary failure")
-        return "success"
-    
-    result = await retry_async(flaky_function, max_attempts=5, delay=0.1)
-    
-    assert result == "success"
-    assert call_count == 3  # Failed twice, succeeded third time
-
-async def test_retry_exhausted():
-    async def always_fail():
-        raise ValueError("Always fails")
-    
-    with pytest.raises(ValueError):
-        await retry_async(always_fail, max_attempts=3, delay=0.1)
-```
-
----
-
-### ISSUE #12: Missing Health Check for Components
-
-**Location:** `health.py` needs enhancement  
-**Severity:** 🟢 **MEDIUM**  
-**Impact:** No visibility into component health
-
-**Solution:**
-```python
-# Enhance health.py
-
-import time
-from typing import Dict, Optional
-from dataclasses import dataclass, asdict
-from enum import Enum
-import asyncio
-
-class HealthStatus(Enum):
-    HEALTHY = "healthy"
-    DEGRADED = "degraded"
-    UNHEALTHY = "unhealthy"
-
-@dataclass
-class ComponentHealth:
-    """Health status for a component"""
-    status: HealthStatus
-    last_check: float
-    last_success: float
-    failure_count: int = 0
-    error_message: Optional[str] = None
-    metrics: Dict = None
-    
-    def to_dict(self) -> Dict:
-        d = asdict(self)
-        d['status'] = self.status.value
-        return d
-
-class HealthChecker:
-    """Enhanced health checker"""
-    
-    def __init__(self):
-        self.components: Dict[str, ComponentHealth] = {}
-        self.start_time = time.time()
-        self.lock = asyncio.Lock()
-    
-    async def register_component(self, name: str):
-        """Register a component for health checking"""
-        async with self.lock:
-            self.components[name] = ComponentHealth(
-                status=HealthStatus.HEALTHY,
-                last_check=time.time(),
-                last_success=time.time(),
-                metrics={}
-            )
-    
-    async def update_status(self, name: str, status: HealthStatus, 
-                          error: Optional[str] = None, 
-                          metrics: Optional[Dict] = None):
-        """Update component health status"""
-        async with self.lock:
-            if name not in self.components:
-                await self.register_component(name)
-            
-            comp = self.components[name]
-            comp.last_check = time.time()
-            comp.status = status
-            
-            if status == HealthStatus.HEALTHY:
-                comp.last_success = time.time()
-                comp.failure_count = 0
-                comp.error_message = None
-            else:
-                comp.failure_count += 1
-                comp.error_message = error
-            
-            if metrics:
-                comp.metrics.update(metrics)
-    
-    async def record_success(self, name: str, metrics: Optional[Dict] = None):
-        """Record successful operation"""
-        await self.update_status(name, HealthStatus.HEALTHY, metrics=metrics)
-    
-    async def record_failure(self, name: str, error: str):
-        """Record failed operation"""
-        async with self.lock:
-            if name in self.components:
-                comp = self.components[name]
-                
-                # Determine status based on failure count
-                if comp.failure_count >= 5:
-                    status = HealthStatus.UNHEALTHY
-                elif comp.failure_count >= 2:
-                    status = HealthStatus.DEGRADED
-                else:
-                    status = HealthStatus.HEALTHY
-                
-                await self.update_status(name, status, error)
-    
-    async def get_overall_health(self) -> Dict:
-        """Get overall system health"""
-        async with self.lock:
-            # Determine overall status
-            statuses = [c.status for c in self.components.values()]
-            
-            if any(s == HealthStatus.UNHEALTHY for s in statuses):
-                overall = HealthStatus.UNHEALTHY
-            elif any(s == HealthStatus.DEGRADED for s in statuses):
-                overall = HealthStatus.DEGRADED
-            else:
-                overall = HealthStatus.HEALTHY
-            
-            return {
-                'status': overall.value,
-                'uptime_seconds': time.time() - self.start_time,
-                'components': {
-                    name: comp.to_dict() 
-                    for name, comp in self.components.items()
-                },
-                'timestamp': time.time()
-            }
-
-# Global instance
-health_checker = HealthChecker()
-
-# Usage in scanner.py:
-from health import health_checker, HealthStatus
-
-async def _websocket_loop(self):
-    """WebSocket loop with health checks"""
-    while self.running:
-        try:
-            async with websockets.connect(...) as websocket:
-                # ✅ Report healthy
-                await health_checker.record_success(
-                    'scanner',
-                    metrics={'queue_size': self.processing_queue.qsize()}
-                )
-                
-                async for message in websocket:
-                    # ... processing ...
-                    pass
-                    
-        except Exception as e:
-            # ✅ Report failure
-            await health_checker.record_failure('scanner', str(e))
-            logger.error(f"WebSocket error: {e}")
-
-# Usage in trader.py:
-async def execute_trade(self, ...):
-    """Execute trade with health tracking"""
+print()
+all_ok = True
+for module, name in required_modules:
     try:
-        # ... trade logic ...
-        
-        # ✅ Report success
-        await health_checker.record_success(
-            'trader',
-            metrics={
-                'active_positions': len(self.positions),
-                'last_trade_time': time.time()
-            }
-        )
-        
-    except Exception as e:
-        # ✅ Report failure
-        await health_checker.record_failure('trader', str(e))
-        raise
-```
+        __import__(module)
+        print(f"✅ {name:30} OK")
+    except ImportError as e:
+        print(f"❌ {name:30} MISSING: {e}")
+        all_ok = False
 
----
+if not all_ok:
+    sys.exit(1)
 
-## ⚪ LOW PRIORITY (FUTURE)
+print("\n✅ All critical imports successful")
+PYTHON_SCRIPT
 
-### ISSUE #13: No Distributed Tracing
+    if [ $? -eq 0 ]; then
+        print_success "All imports validated"
+    else
+        print_error "Some imports failed - bot may not work correctly"
+    fi
 
-**Location:** All modules  
-**Severity:** ⚪ **LOW**  
-**Impact:** Hard to debug cross-service issues
+    # Check .env configuration
+    print_info "\nValidating .env configuration..."
 
-**Solution:**
-```python
-# Add OpenTelemetry for distributed tracing
+    python3 << 'PYTHON_SCRIPT'
+import os
+from dotenv import load_dotenv
 
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+load_dotenv()
 
-# Setup tracer
-trace.set_tracer_provider(TracerProvider())
-tracer = trace.get_tracer(__name__)
+required_vars = [
+    'PRIVATE_KEY',
+    'TELEGRAM_BOT_TOKEN',
+    'TELEGRAM_CHAT_ID',
+    'RPC_URL'
+]
 
-# Add Jaeger exporter
-jaeger_exporter = JaegerExporter(
-    agent_host_name='localhost',
-    agent_port=6831,
-)
-trace.get_tracer_provider().add_span_processor(
-    BatchSpanProcessor(jaeger_exporter)
-)
+print()
+all_configured = True
+for var in required_vars:
+    value = os.getenv(var)
+    if not value or 'YOUR_' in value or 'test_' in value:
+        print(f"⚠️  {var:25} NOT CONFIGURED")
+        all_configured = False
+    else:
+        # Mask sensitive data
+        if 'KEY' in var or 'TOKEN' in var:
+            display = value[:10] + "..." + value[-4:] if len(value) > 14 else "***"
+        else:
+            display = value
+        print(f"✅ {var:25} {display}")
 
-# Usage:
-with tracer.start_as_current_span("analyze_token") as span:
-    span.set_attribute("token.address", token_address)
-    # ... analysis logic ...
-    span.set_attribute("token.score", score)
-```
+if not all_configured:
+    print("\n⚠️  Some variables not configured - bot will not start")
+else:
+    print("\n✅ All required variables configured")
+PYTHON_SCRIPT
+}
 
----
+# ==============================================================================
+# SETUP TESTS
+# ==============================================================================
 
-### ISSUE #14: Code Duplication in Multiple Files
+run_tests() {
+    print_header "STEP 7: Running Tests (Optional)"
 
-**Location:** Various files  
-**Severity:** ⚪ **LOW**  
-**Impact:** Harder to maintain
+    read -p "Run test suite? (y/n) " -n 1 -r
+    echo
 
-**Solution:**
-```python
-# Create utils.py with common functions
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        print_info "Tests skipped"
+        return
+    fi
 
-# Extract common patterns:
-# - Address validation
-# - Time formatting
-# - Number formatting
-# - Error handling wrappers
-```
+    if [ ! -d "tests" ]; then
+        print_warning "Tests directory not found"
+        return
+    fi
 
----
+    print_info "Installing test dependencies..."
+    pip install pytest pytest-asyncio pytest-mock pytest-cov -q
 
-## 🧪 TESTING GUIDELINES
+    print_info "Running tests..."
+    pytest tests/ -v --tb=short
 
-### Running Tests
+    if [ $? -eq 0 ]; then
+        print_success "All tests passed"
+    else
+        print_warning "Some tests failed - review output above"
+    fi
+}
+
+# ==============================================================================
+# FINAL SETUP
+# ==============================================================================
+
+create_startup_script() {
+    print_header "STEP 8: Creating Startup Scripts"
+
+    # Create start script
+    cat > start.sh << 'EOF'
+#!/bin/bash
+# Quick start script for Solana Trading Bot
+
+# Activate virtual environment
+if [ -d "venv" ]; then
+    source venv/bin/activate
+else
+    echo "❌ Virtual environment not found. Run setup.sh first."
+    exit 1
+fi
+
+# Check .env
+if [ ! -f ".env" ]; then
+    echo "❌ .env file not found. Run setup.sh first."
+    exit 1
+fi
+
+# Start bot
+echo "🚀 Starting Solana Trading Bot..."
+python3 main.py
+EOF
+
+    chmod +x start.sh
+    print_success "start.sh created"
+
+    # Create stop script
+    cat > stop.sh << 'EOF'
+#!/bin/bash
+# Stop script for Solana Trading Bot
+
+echo "🛑 Stopping Solana Trading Bot..."
+pkill -f "python3 main.py"
+
+if [ $? -eq 0 ]; then
+    echo "✅ Bot stopped"
+else
+    echo "⚠️  No running bot process found"
+fi
+EOF
+
+    chmod +x stop.sh
+    print_success "stop.sh created"
+
+    # Create status script
+    cat > status.sh << 'EOF'
+#!/bin/bash
+# Status check script
+
+if pgrep -f "python3 main.py" > /dev/null; then
+    echo "✅ Bot is RUNNING"
+    echo ""
+    echo "Process info:"
+    ps aux | grep "python3 main.py" | grep -v grep
+else
+    echo "⚠️  Bot is NOT running"
+fi
+
+# Check log file
+if [ -f "bot.log" ]; then
+    echo ""
+    echo "Latest log entries:"
+    tail -10 bot.log
+fi
+EOF
+
+    chmod +x status.sh
+    print_success "status.sh created"
+}
+
+create_documentation() {
+    print_info "Creating quick reference..."
+
+    cat > QUICK_START.md << 'EOF'
+# 🚀 Quick Start Guide
+
+## Starting the Bot
 
 ```bash
-# Run all tests
-pytest
-
-# Run specific category
-pytest tests/test_critical.py
-pytest tests/test_high_priority.py
-
-# Run with coverage
-pytest --cov=. --cov-report=html
-
-# Run specific test
-pytest tests/test_scanner.py::test_memory_management -v
+./start.sh
 ```
 
-### Test Structure
+## Stopping the Bot
 
-```
-tests/
-├── test_critical.py        # Critical issues
-├── test_high_priority.py   # High priority issues
-├── test_medium_priority.py # Medium priority issues
-├── test_integration.py     # Integration tests
-└── conftest.py            # Fixtures
+```bash
+./stop.sh
 ```
 
-### Writing Tests
+## Check Status
 
-```python
-# Example test for Issue #1
-
-def test_logger_initialization():
-    """Test logging is initialized before use"""
-    import main
-    
-    # Logger should be configured
-    assert logging.getLogger().hasHandlers()
-    
-    # Should not raise
-    main.logger.info("Test message")
-
-# Example test for Issue #2
-
-async def test_scanner_memory_management():
-    """Test processed_pairs doesn't grow unbounded"""
-    from scanner import HighPerformanceScanner
-    
-    scanner = HighPerformanceScanner()
-    
-    # Add many pairs
-    for i in range(20000):
-        scanner._add_processed_pair(f"pair_{i}")
-    
-    # Should be limited
-    assert len(scanner.processed_pairs) <= scanner.processed_pairs_max_size
+```bash
+./status.sh
 ```
 
----
+## Telegram Commands
 
-## 📅 IMPLEMENTATION ORDER
+Once the bot is running, open Telegram and:
 
-### Phase 1: Critical Fixes (Week 1)
-**Target: Fix all 🔴 CRITICAL issues**
+1. Search for your bot (name you gave to @BotFather)
+2. Send `/start`
+3. You should see the main menu
 
-Day 1:
-- [ ] Issue #1: Logger initialization
-- [ ] Issue #3: Replace print with logging
+### Essential Commands
 
-Day 2-3:
-- [ ] Issue #2: Memory leak in scanner
-- [ ] Issue #5: Quote cache cleanup
+- `/start` - Show main menu
+- `/status` - Bot status
+- `/dashboard` - Live dashboard
+- `/positions` - Show open positions
+- `/settings` - Configure parameters
+- `/stop` - Stop scanner (positions remain open)
 
-Day 4-5:
-- [ ] Issue #4: Safe exception handling
-- [ ] Test all critical fixes
+## Configuration
 
-### Phase 2: High Priority (Week 2)
-**Target: Fix all 🟡 HIGH issues**
+Edit `.env` file to change:
+- Wallet private key
+- Telegram tokens
+- RPC endpoint
+- Trading parameters
 
-Day 1-2:
-- [ ] Issue #6: Rate limiting
-- [ ] Issue #7: Connection pooling
+## Logs
 
-Day 3-4:
-- [ ] Issue #8: Input validation
-- [ ] Issue #9: Graceful shutdown
+- **bot.log** - Main application log
+- **logs/audit.log** - Security audit log
+- **trades.db** - Trade history database
 
-Day 5:
-- [ ] Integration testing
-- [ ] Performance testing
+## Safety Tips
 
-### Phase 3: Medium Priority (Week 3)
-**Target: Implement 🟢 MEDIUM improvements**
+⚠️ **IMPORTANT:**
+1. Start with SMALL amounts (0.01 SOL)
+2. Use a BURNER wallet (not your main wallet)
+3. Enable AUTO-BUY only after testing
+4. Monitor continuously for first 24 hours
+5. Set stop-loss limits
 
-Day 1-2:
-- [ ] Issue #10: Metrics collection
-- [ ] Issue #11: Retry logic
+## Troubleshooting
 
-Day 3-4:
-- [ ] Issue #12: Health checks
-- [ ] Documentation updates
+### Bot won't start
 
-Day 5:
-- [ ] Final testing
-- [ ] Production deployment prep
+```bash
+# Check Python version (need 3.10+)
+python3 --version
 
-### Phase 4: Polish (Week 4)
-**Target: ⚪ LOW priority and refinement**
+# Check .env file
+cat .env | grep -v "^#" | grep "="
 
-Day 1-3:
-- [ ] Issue #13: Distributed tracing (optional)
-- [ ] Issue #14: Refactoring (optional)
-
-Day 4-5:
-- [ ] Performance optimization
-- [ ] Documentation finalization
-- [ ] Production ready checklist
-
----
-
-## ✅ FINAL CHECKLIST
-
-### Before Going Live
-
-```
-Critical:
-[ ] All logging properly configured
-[ ] No memory leaks
-[ ] All exceptions properly caught
-[ ] Quote cache with TTL
-[ ] All tests passing
-
-High Priority:
-[ ] Rate limiting implemented
-[ ] Connection pooling active
-[ ] Input validation everywhere
-[ ] Graceful shutdown working
-
-Medium Priority:
-[ ] Metrics collecting
-[ ] Retry logic for critical ops
-[ ] Health checks reporting
-
-Production:
-[ ] All environment variables set
-[ ] Premium RPC configured
-[ ] Monitoring dashboards setup
-[ ] Alerts configured
-[ ] Backup strategy in place
+# Check logs
+tail -50 bot.log
 ```
 
----
+### No tokens found
 
-## 📊 EXPECTED IMPROVEMENTS
+1. Lower MIN_SCORE in Settings
+2. Check RPC connection
+3. Verify WebSocket connectivity
 
-### Performance
+### Transactions failing
 
+1. Check wallet balance: Need >0.5 SOL
+2. Increase slippage tolerance
+3. Use premium RPC (Helius/Alchemy)
+
+## Getting Help
+
+1. Check README.md for detailed documentation
+2. Review logs in bot.log
+3. Check GitHub issues
+
+## Emergency Stop
+
+If something goes wrong:
+
+```bash
+./stop.sh
+# Or force kill
+pkill -9 -f "python3 main.py"
 ```
-Before:
-- Memory: Grows 50MB/24h → Crash
-- Latency: Variable, no tracking
-- Errors: Silent failures
+Then review logs and fix issues before restarting.
+EOF
 
-After:
-- Memory: Stable at 200MB
-- Latency: <200ms (tracked)
-- Errors: Logged, retried, alerted
-```
+    print_success "QUICK_START.md created"
+}
 
-### Reliability
+# ==============================================================================
+# MAIN SETUP FLOW
+# ==============================================================================
 
-```
-Before:
-- Uptime: 70-80% (crashes)
-- Recovery: Manual restart needed
-- Debugging: Print statements
+main() {
+    clear
 
-After:
-- Uptime: 99%+ (no crashes)
-- Recovery: Automatic with retry
-- Debugging: Structured logs + metrics
-```
+    cat << "EOF"
+╔═══════════════════════════════════════════════════════════════════════╗
+║                                                                       ║
+║   ███████╗ ██████╗ ██╗      █████╗ ███╗   ██╗ █████╗                ║
+║   ██╔════╝██╔═══██╗██║     ██╔══██╗████╗  ██║██╔══██╗               ║
+║   ███████╗██║   ██║██║     ███████║██╔██╗ ██║███████║               ║
+║   ╚════██║██║   ██║██║     ██╔══██║██║╚██╗██║██╔══██║               ║
+║   ███████║╚██████╔╝███████╗██║  ██║██║ ╚████║██║  ██║               ║
+║   ╚══════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝               ║
+║                                                                       ║
+║            MEME COIN TRADING BOT - SETUP WIZARD                      ║
+║                     Version 2.0 Enhanced                             ║
+║                                                                       ║
+╚═══════════════════════════════════════════════════════════════════════╝
+EOF
 
-### Score Impact
+    echo -e "${YELLOW}This script will guide you through the complete setup process.${NC}"
+    echo -e "${YELLOW}Estimated time: 5-10 minutes${NC}\n"
 
-```
-Before: 95/100
-- Testing: 85/100
-- Code Quality: 90/100
-- Production Readiness: 95/100
+    read -p "Press Enter to begin setup..."
 
-After: 98-100/100
-- Testing: 90/100 (+5)
-- Code Quality: 95/100 (+5)
-- Production Readiness: 100/100 (+5)
-```
+    # Run all setup steps
+    check_system
+    setup_venv
+    install_dependencies
+    setup_env_file
+    setup_database
+    validate_setup
+    run_tests
+    create_startup_script
+    create_documentation
 
----
+    # Final summary
+    print_header "🎉 SETUP COMPLETE!"
 
-## 🎯 SUCCESS CRITERIA
+    echo -e "${GREEN}"
+    cat << "EOF"
+    ✅ All steps completed successfully!
+    📋 NEXT STEPS:
+    1. Review your .env configuration:
+       nano .env
+    2. Fund your wallet with SOL:
+       - Get wallet address: grep PRIVATE_KEY .env
+       - Send 1-2 SOL to your public address
+    3. Start the bot:
+       ./start.sh
+    4. Open Telegram and send /start to your bot
+    5. Start with Conservative settings and small amounts!
+    📚 DOCUMENTATION:
+    - README.md         - Complete documentation
+    - QUICK_START.md    - Quick reference guide
+    - .env.example      - Configuration template
+    ⚠️  IMPORTANT REMINDERS:
+    - Use only a BURNER wallet
+    - Start with 0.01 SOL per trade
+    - Monitor actively for first 24 hours
+    - Enable Auto-Buy only after testing
+    - Crypto trading is high risk!
+EOF
+    echo -e "${NC}"
 
-### Must Have
-✅ Zero memory leaks  
-✅ All critical exceptions logged  
-✅ Rate limiting prevents API bans  
-✅ Graceful shutdown preserves data  
-✅ 90%+ test coverage  
+    print_success "Setup wizard completed successfully!"
+    echo ""
+}
 
-### Nice to Have
-✅ Metrics dashboard operational  
-✅ Distributed tracing working  
-✅ Sub-200ms average latency  
-✅ Health checks expose all components  
+# ==============================================================================
+# RUN MAIN
+# ==============================================================================
 
-### Excellence
-✅ 99%+ uptime over 30 days  
-✅ Zero data loss incidents  
-✅ Complete observability  
-✅ Production score: 100/100  
+main
+Contributor
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+⚠️ Potential issue | 🔴 Critical
 
----
+CRITICAL: Windows line endings (CRLF) detected throughout the file.
 
-**This document is ready for Claude Code execution. Each issue has:**
-- ✅ Clear problem description
-- ✅ Exact file locations
-- ✅ Complete code solutions
-- ✅ Testing guidance
-- ✅ Implementation priority
+The entire setup.sh script contains Windows-style line endings (CRLF: \r\n) instead of Unix-style (LF: \n). This will cause the script to fail when executed on Linux/Unix systems with errors like:
 
-**Start with Phase 1 (Critical Fixes) and proceed sequentially!**
+bash: ./setup.sh: /bin/bash^M: bad interpreter: No such file or directory
+Impact: The setup script will not work on Unix/Linux systems, which is the primary target platform for this bot.
+
+Fix immediately before merge:
+
+# Option 1: Using dos2unix
+dos2unix setup.sh
+
+# Option 2: Using sed
+sed -i 's/\r$//' setup.sh
+
+# Option 3: Using tr
+tr -d '\r' < setup.sh > setup.sh.fixed && mv setup.sh.fixed setup.sh
+Prevention: Configure your Git to handle line endings properly:
+
+# In the repository
+git config core.autocrlf input
+
+# Or add to .gitattributes
+*.sh text eol=lf
+After fixing, verify with:
+
+file setup.sh  # Should show "ASCII text" not "ASCII text, with CRLF line terminators"
+🧰 Tools
+🤖 Prompt for AI Agents
+@0xxCool	Reply...
+test_components.py
+Comment on lines +356 to +364
+        # Test query
+        try:
+            trades = await db.get_recent_trades(limit=10)
+            success = isinstance(trades, list)
+            print_test("Query recent trades", success, f"Found: {len(trades)} trades")
+            results['query'] = success
+        except Exception as e:
+            print_test("Query recent trades", False, str(e))
+            results['query'] = False
+Contributor
+@coderabbitai
+coderabbitai bot
+2 minutes ago
+⚠️ Potential issue | 🔴 Critical
+
+Critical: Test calls non-existent database method.
+
+The test at line 358 calls db.get_recent_trades(limit=10), but the TradeDatabase class (from the relevant code snippets) does not have a get_recent_trades() method. The class has get_trade_history() instead.
+
+This will cause the test to fail with an AttributeError.
+
+Fix by using the correct method name:
+
+-        trades = await db.get_recent_trades(limit=10)
++        trades = await db.get_trade_history(limit=10)
+Alternatively, if get_recent_trades() is intended to be added to the database module, ensure it's implemented before running this test.
+
+📝 Committable suggestion
+‼️ IMPORTANT
+Carefully review the code before committing. Ensure that it accurately replaces the highlighted code, contains no missing lines, and has no issues with indentation. Thoroughly test & benchmark the code to ensure it meets the requirements.
+
+Suggested change
+        # Test query
+        try:
+            trades = await db.get_recent_trades(limit=10)
+            success = isinstance(trades, list)
+            print_test("Query recent trades", success, f"Found: {len(trades)} trades")
+            results['query'] = success
+        except Exception as e:
+            print_test("Query recent trades", False, str(e))
+            results['query'] = False
+        # Test query
+        try:
+            trades = await db.get_trade_history(limit=10)
+            success = isinstance(trades, list)
+            print_test("Query recent trades", success, f"Found: {len(trades)} trades")
+            results['query'] = success
+        except Exception as e:
+            print_test("Query recent trades", False, str(e))
+            results['query'] = False
