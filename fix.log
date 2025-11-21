@@ -1,100 +1,191 @@
-Actionable comments posted: 2
+Actionable comments posted: 1
 
 Caution
 
 Some comments are outside the diff and can’t be posted inline due to platform limitations.
 
 ⚠️ Outside diff range comments (3)
-scanner.py (2)
-483-492: Add Scanner alias for backward compatibility
+auto_trader.py (1)
+50-55: Daily-limit locking still allows overspending; make check + increment atomic
 
-Tests import Scanner directly from the scanner module, causing ImportError. Add the alias after the global scanner instance:
+The new daily_limit_lock and guarded checks are a good step, but there’s still a race:
 
-# Globale Scanner Instanz
-scanner = HighPerformanceScanner()
+Two concurrent process_token_alert calls can both:
+Pass the initial limit check under the lock.
+Compute amount_sol.
+Pass the second daily_auto_buy_spent + amount_sol check under the lock.
+Because daily_auto_buy_spent is only incremented later (in a separate locked block after the trade succeeds), both paths can execute and push total spent beyond auto_buy_daily_limit_sol.
+To enforce the daily cap strictly, the second check and the increment need to be in the same critical section, ideally with rollback if the trade fails. Conceptually:
 
-# Legacy alias for backward compatibility (tests/old code import Scanner)
-Scanner = HighPerformanceScanner
+-            if should_buy:
+-                amount_sol = await self._calculate_buy_amount(ai_prediction)
+-
+-                # ✅ Check limit again before executing (thread-safe)
+-                async with self.daily_limit_lock:
+-                    if self.daily_auto_buy_spent + amount_sol > self.settings.auto_buy_daily_limit_sol:
+-                        logger.info("Daily limit would be exceeded, skipping buy")
+-                        return None
+-
+-                # Execute trade
+-                tx_sig = await self._execute_auto_buy(
++            if should_buy:
++                amount_sol = await self._calculate_buy_amount(ai_prediction)
++
++                # ✅ Atomically reserve daily budget before executing
++                async with self.daily_limit_lock:
++                    if self.daily_auto_buy_spent + amount_sol > self.settings.auto_buy_daily_limit_sol:
++                        logger.info("Daily limit would be exceeded, skipping buy")
++                        return None
++                    self.daily_auto_buy_spent += amount_sol
++
++                # Execute trade
++                tx_sig = await self._execute_auto_buy(
+                     token_data,
+                     amount_sol,
+                     ai_prediction
+                 )
+ 
+-                if tx_sig:
+-                    self.stats['auto_buys'] += 1
+-                    # ✅ Thread-safe increment
+-                    async with self.daily_limit_lock:
+-                        self.daily_auto_buy_spent += amount_sol
++                if not tx_sig:
++                    # Roll back reserved amount on failure
++                    async with self.daily_limit_lock:
++                        self.daily_auto_buy_spent -= amount_sol
++                    return None
++
++                self.stats['auto_buys'] += 1
+This way, no two tasks can both “see” the same remaining budget, and the counter correctly reflects only successful auto-buys.
 
-async def run_scanner_stream():
-    """Entry Point für Main"""
-    try:
-        await scanner.start()
-    except Exception as e:
-        logger.error(f"Scanner Fatal Error: {e}", exc_info=True)
-        await scanner.stop()
-(Note: The original diff used // comments, which is invalid Python syntax—use # instead.)
+Also applies to: 72-83, 91-112
 
-21-21: Remove top-level from analyzer import analyzer import; defer to local scopes in _process_worker() and stop()
+trader.py (2)
+228-341: Quote-analysis uses wrong key names (outputAmount vs output_amount), breaking routing logic
 
-The circular import issue remains unresolved. The top-level import at line 21 creates a dependency cycle if analyzer.py imports scanner (directly or indirectly). Two methods still use analyzer without local imports:
+_analyze_quotes, _calculate_quote_score, _check_split_routing, and _is_split_beneficial all assume camelCase keys:
 
-Line ~390 (_process_worker): await analyzer.analyze_token(priority_pair.pair_data) – add local import in except block
-Line ~481 (stop): await analyzer.cleanup() – add local import before this call
-Remove the top-level import at line 21 and add local imports at both usage sites as shown in the original suggested diff.
+quote['outputAmount']
+quote.get('priceImpactPct', 0)
+But all DEX adapters (JupiterDEX, RaydiumDEX, OrcaDEX) return snake_case keys:
 
-config.py (1)
-36-41: Fix mock_config fixture to use string values for all environment variables
+output_amount
+price_impact
+This means:
 
-The test fails because mock_config in tests/conftest.py contains numeric values (int), but os.environ only accepts strings. When test_config_loads_from_env calls patch.dict(os.environ, mock_config), it raises TypeError: str expected, not int.
+_analyze_quotes will crash with KeyError or silently produce wrong scores/savings.
+Split-routing (_check_split_routing, _is_split_beneficial) will also miscompute or fail.
+You should standardize on the existing snake_case keys in the router:
 
-Convert all mock values to strings in tests/conftest.py lines 24-28:
+-        # Calculate savings vs worst quote
+-        if len(scored_quotes) > 1:
+-            worst_output = min(q[1]['outputAmount'] for q in scored_quotes)
+-            best_output = best_quote['outputAmount']
++        # Calculate savings vs worst quote
++        if len(scored_quotes) > 1:
++            worst_output = min(q[1]['output_amount'] for q in scored_quotes)
++            best_output = best_quote['output_amount']
+             savings_pct = ((best_output - worst_output) / worst_output) * 100
+             best_quote['savings_pct'] = savings_pct
+-        output_factor = quote.get('outputAmount', 0) / 1e9  # Convert to SOL
++        output_factor = quote.get('output_amount', 0) / 1e9  # Convert to SOL
+-        price_impact = abs(quote.get('priceImpactPct', 0))
++        price_impact = abs(quote.get('price_impact', 0))
+-        if len(split_quotes) == 2:
+-            total_output = sum(q['outputAmount'] for q in split_quotes)
++        if len(split_quotes) == 2:
++            total_output = sum(q['output_amount'] for q in split_quotes)
+-        improvement = (split_quote['outputAmount'] - single_quote['outputAmount']) / single_quote['outputAmount']
++        improvement = (split_quote['output_amount'] - single_quote['output_amount']) / single_quote['output_amount']
+This will make the scoring/splitting logic consistent with the DEX adapters and with how Trader.open_position and close_position already access output_amount.
 
-@pytest.fixture
-def mock_config():
-    """Mock configuration for testing"""
+Also applies to: 320-329
+
+924-969: Tests expect Trader.execute_trade; add a small async alias for backward compatibility
+
+CI reports Trader class missing method 'execute_trade'. The class currently exposes open_position / close_position as the async trade operations, so adding a thin wrapper keeps tests and any legacy callers working without changing semantics:
+
+     async def open_position(self, token_metrics, amount_sol: float) -> Optional[Position]:
+         """
+         Opens a new trading position
+@@
+             print(f"❌ Error opening position: {e}")
+             return None
++
++    async def execute_trade(self, token_metrics, amount_sol: float) -> Optional[Position]:
++        """
++        Backward-compatible alias for opening a position.
++        Required by existing tests/legacy code.
++        """
++        return await self.open_position(token_metrics, amount_sol)
+@@
+     async def cleanup(self):
+         """Cleanup resources - close DEX sessions"""
+         try:
+             await smart_router.close()
+             logger.info("✅ Trader cleanup completed - DEX sessions closed")
+         except Exception as e:
+             logger.warning(f"⚠️ Trader cleanup warning: {e}")
+This should resolve the failing test without impacting current callers.
+
+Also applies to: 979-1041, 1160-1169
+
+🧹 Nitpick comments (2)
+trader.py (1)
+376-384: Cleanup paths look good; consider tightening broad exception catches
+
+The new SmartOrderRouter.close() and Trader.cleanup() correctly close all DEX sessions and log failures, which addresses the aiohttp session leak for long-running processes.
+
+Both methods catch a bare Exception, which Ruff flags (BLE001). Given these are shutdown/cleanup paths, broad catching is acceptable, but if you want to satisfy the linter and be stricter you could:
+
+Narrow to expected aiohttp / network errors, or
+Add a comment / # noqa: BLE001 to explicitly document the intent not to let cleanup failures crash the process.
+Functionally the current behavior is fine; this is mostly lint/noise.
+
+Also applies to: 1160-1167
+
+scanner.py (1)
+425-425: Optional: Consider lock protection for stats consistency.
+
+The stats reporter accesses len(self.processed_pairs) without holding processed_pairs_lock. While this is non-critical (logging only) and Python's GIL provides some protection, using the lock would ensure consistent reads during concurrent modifications.
+
+If desired, apply this diff for complete consistency:
+
+-            logger.info(
+-                f"📊 Scanner Stats: received={self.stats['received']}, "
+-                f"processed={self.stats['processed']}, queue={self.processing_queue.qsize()}, "
+-                f"cache={len(self.processed_pairs)} pairs"
+-            )
++            async with self.processed_pairs_lock:
++                cache_size = len(self.processed_pairs)
++            
++            logger.info(
++                f"📊 Scanner Stats: received={self.stats['received']}, "
++                f"processed={self.stats['processed']}, queue={self.processing_queue.qsize()}, "
++                f"cache={cache_size} pairs"
++            )
+📜 Review details
+tests/conftest.py
+Comment on lines +19 to 31
+    """Mock configuration for testing (all values must be strings for os.environ)"""
     return {
         "RPC_ENDPOINT": "https://api.mainnet-beta.solana.com",
         "WALLET_ADDRESS": "test_wallet_address",
         "PRIVATE_KEY": "test_private_key",
         "TELEGRAM_BOT_TOKEN": "test_token",
         "TELEGRAM_CHAT_ID": "test_chat_id",
+        "MIN_LIQUIDITY": 5000,
+        "MIN_VOLUME_24H": 10000,
+        "MIN_HOLDERS": 50,
+        "MAX_MARKET_CAP": 100000,
+        "MIN_CONFIDENCE_SCORE": 60,
         "MIN_LIQUIDITY": "5000",
         "MIN_VOLUME_24H": "10000",
         "MIN_HOLDERS": "50",
         "MAX_MARKET_CAP": "100000",
         "MIN_CONFIDENCE_SCORE": "60",
     }
-📜 Review details
-config.py
-Comment on lines +22 to 34
-# WebSocket Headers für Cloudflare-Schutz (erweitert für bessere Bot-Detection-Umgehung)
-DEXSCREENER_WSS_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Accept": "*/*",
-    "Accept-Language": "en-US,en;q=0.9,de;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Origin": "https://dexscreener.com",
-    "Referer": "https://dexscreener.com/",
-    "Sec-WebSocket-Version": "13",
-    "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
-}
-Contributor
-@coderabbitai
-coderabbitai bot
-now
-⚠️ Potential issue | 🟡 Minor
-
-🧩 Analysis chain
-Remove non-functional Sec-WebSocket-* headers from DEXSCREENER_WSS_HEADERS
-
-The Sec-WebSocket-Version and Sec-WebSocket-Extensions headers in the dictionary (config.py, lines 30–31) are silently ignored by the websockets library version 12.x. Sec-WebSocket-Version is generated automatically and Sec-WebSocket-Extensions must be negotiated with the extensions argument. These will never reach the server via extra_headers, making them dead code.
-
-The other headers (User-Agent, Accept, Accept-Language, Accept-Encoding, Origin, Referer, Cache-Control, Pragma) are functional and appropriate for bot-detection evasion. Remove the two Sec-* entries to avoid confusion and keep the config accurate.
-
-🤖 Prompt for AI Agents
-@0xxCool	Reply...
-scanner.py
-Comment on lines 87 to 92
-        backoff = 1
-        consecutive_502_errors = 0
-        consecutive_403_errors = 0
-        max_502_before_rotation = 3  # Nach 3 502-Fehlern zum nächsten Endpoint wechseln
-        max_403_before_rotation = 2  # Nach 2 403-Fehlern zum nächsten Endpoint wechseln
-
 Contributor
 @coderabbitai
 coderabbitai bot
@@ -102,27 +193,11 @@ now
 ⚠️ Potential issue | 🔴 Critical
 
 🧩 Analysis chain
-Multiple critical issues block this PR: backoff clamping prevents 403 rate-limit handling, and missing Scanner export breaks tests
+Config class does not read from os.environ; test failure is due to type mismatch
 
-Backoff logic never reaches 60s due to global clamp
+The review comment is correct. The issue is not with stringifying mock_config (that's correct for os.environ), but with the Config class implementation:
 
-Your 403 handler sets backoff = min(backoff * 3, 60), but lines 243–245 clamp all backoff to 30s:
-
-wait_time = min(backoff, 30)
-backoff = min(backoff * 2, 30)
-This prevents the intended 10–60s rate-limit backoff. Introduce a max_backoff variable that tracks the ceiling per scenario:
-
-backoff = 1
-+max_backoff = 30  # Standard-Maximum für Backoff
-consecutive_502_errors = 0
-On 403 rotation, set max_backoff = 60; on 502 rotation, reset to 30. Then use:
-
--wait_time = min(backoff, 30)
-+wait_time = min(backoff, max_backoff)
--backoff = min(backoff * 2, 30)
-+backoff = min(backoff * 2, max_backoff)
-Scanner export missing—tests fail
-
-tests/test_scanner_integration.py imports from scanner import Scanner (lines 15, 28, 40) but scanner.py exports only HighPerformanceScanner (class) and scanner (instance). Add at the end of scanner.py:
-
-Scanner = HighPerformanceScanner
+Config.__init__() does not read from os.environ; instead, it hardcodes values from the dataclass instances (e.g., self.MIN_LIQUIDITY = scanner_filters.MIN_LIQUIDITY_USD, which is a float)
+The test patches os.environ with string values, but Config() ignores this and uses the numeric dataclass values
+Line 19 of test_config.py asserts config.MIN_LIQUIDITY == mock_config["MIN_LIQUIDITY"], comparing float 5000 to string "5000" → type mismatch failure
+To fix: Modify Config.__init__() to actually read from os.environ and cast string values to the correct numeric types (int/float), or update the test assertion to compare numeric values directly without relying on the mock_config strings.
