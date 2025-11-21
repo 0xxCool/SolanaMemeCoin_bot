@@ -214,8 +214,12 @@ Health: http://localhost:8000/health
                 drop_pending_updates=True
             )
 
-            # Run periodic tasks
-            await self.periodic_tasks()
+            # Run periodic tasks in background
+            asyncio.create_task(self.periodic_tasks())
+
+            # Keep the bot running
+            while self.running:
+                await asyncio.sleep(1)
 
         except KeyboardInterrupt:
             logger.info("⚠️ Keyboard Interrupt empfangen")
@@ -226,8 +230,8 @@ Health: http://localhost:8000/health
                     f"❌ *Bot Fehler:*\n`{str(e)[:200]}`",
                     important=True
                 )
-            except Exception:
-                pass  # Telegram könnte bereits down sein
+            except Exception as send_err:
+                logger.warning(f"⚠️ Telegram error notification failed: {send_err}")
         finally:
             await self.shutdown()
             
