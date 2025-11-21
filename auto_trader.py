@@ -91,11 +91,12 @@ class AutoTrader:
             if should_buy:
                 amount_sol = await self._calculate_buy_amount(ai_prediction)
 
-                # ✅ Check limit again before executing (thread-safe)
+                # ✅ Atomically reserve daily budget before executing
                 async with self.daily_limit_lock:
                     if self.daily_auto_buy_spent + amount_sol > self.settings.auto_buy_daily_limit_sol:
                         logger.info("Daily limit would be exceeded, skipping buy")
                         return None
+                    self.daily_auto_buy_spent += amount_sol
 
                 # Execute trade
                 tx_sig = await self._execute_auto_buy(
@@ -104,25 +105,27 @@ class AutoTrader:
                     ai_prediction
                 )
 
-                if tx_sig:
-                    self.stats['auto_buys'] += 1
-                    # ✅ Thread-safe increment
+                if not tx_sig:
+                    # Roll back reserved amount on failure
                     async with self.daily_limit_lock:
-                        self.daily_auto_buy_spent += amount_sol
+                        self.daily_auto_buy_spent -= amount_sol
+                    return None
 
-                    # Start monitoring position
-                    await self._start_position_monitor(token_data, ai_prediction)
+                self.stats['auto_buys'] += 1
 
-                    # Notify via Telegram
-                    await tg_bot.send_message(
-                        f"🤖 **AI AUTO-BUY**\n"
-                        f"Token: {token_data.get('symbol', 'Unknown')}\n"
-                        f"Amount: {amount_sol:.3f} SOL\n"
-                        f"AI Score: {ai_prediction['confidence']*100:.1f}%\n"
-                        f"Expected Return: {ai_prediction['predicted_return']:.1f}%\n"
-                        f"TX: `{tx_sig[:16]}...`",
-                        important=True
-                    )
+                # Start monitoring position
+                await self._start_position_monitor(token_data, ai_prediction)
+
+                # Notify via Telegram
+                await tg_bot.send_message(
+                    f"🤖 **AI AUTO-BUY**\n"
+                    f"Token: {token_data.get('symbol', 'Unknown')}\n"
+                    f"Amount: {amount_sol:.3f} SOL\n"
+                    f"AI Score: {ai_prediction['confidence']*100:.1f}%\n"
+                    f"Expected Return: {ai_prediction['predicted_return']:.1f}%\n"
+                    f"TX: `{tx_sig[:16]}...`",
+                    important=True
+                )
 
                 return tx_sig
 
