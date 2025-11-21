@@ -439,8 +439,7 @@ class EnhancedAnalyzer:
                 # ✅ Rate limiting
                 await APIRateLimiters.dexscreener.acquire()
                 async with self.session.get(
-                    DEXSCREENER_API.format(metrics.address),
-                    ssl=False
+                    DEXSCREENER_API.format(metrics.address)
                 ) as response:
                     if response.status == 200:
                         data = await response.json()
@@ -462,8 +461,7 @@ class EnhancedAnalyzer:
 
             # RugCheck API
             async with self.session.get(
-                RUGCHECK_API_URL.format(metrics.address),
-                ssl=False
+                RUGCHECK_API_URL.format(metrics.address)
             ) as response:
                 if response.status == 200:
                     data = await response.json()

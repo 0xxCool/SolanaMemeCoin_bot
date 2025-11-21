@@ -91,6 +91,7 @@ coverage.xml
 bandit-report.json
 safety-report.json
 logs/audit.log
+config/encryption.salt
 
 # Monitoring
 grafana-data/
