@@ -196,6 +196,7 @@ def check_dependencies() -> Dict[str, Dict]:
     required_packages = {
         'solana': '0.36.10',
         'solders': '0.23.0',
+        'PyNaCl': '1.5.0',
         'python-telegram-bot': '21.9',
         'aiohttp': '3.11.11',
         'websockets': '12.0',
@@ -217,6 +218,8 @@ def check_dependencies() -> Dict[str, Dict]:
                 module = __import__('telegram')
             elif package == 'scikit-learn':
                 module = __import__('sklearn')
+            elif package == 'PyNaCl':
+                module = __import__('nacl')
             else:
                 module = __import__(package)
 
