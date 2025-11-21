@@ -253,6 +253,10 @@ class Config:
     """
     Unified configuration class that aggregates all dataclass instances
     and provides backward-compatible attribute access for tests.
+
+    Note: MIN_VOLUME_24H is a legacy alias that maps to scanner_filters.MIN_VOLUME_USD,
+    which actually represents a 5-minute volume filter (not 24h). This alias exists
+    for backward compatibility with existing tests and legacy code.
     """
     def __init__(self):
         # Aggregate dataclass instances
@@ -265,6 +269,7 @@ class Config:
         # Backward-compatible attributes for tests
         self.RPC_ENDPOINT = RPC_URL
         self.MIN_LIQUIDITY = scanner_filters.MIN_LIQUIDITY_USD
+        # Note: MIN_VOLUME_24H is a legacy name - this actually uses 5-minute volume (MIN_VOLUME_USD)
         self.MIN_VOLUME_24H = scanner_filters.MIN_VOLUME_USD
         self.MIN_HOLDERS = scanner_filters.MIN_HOLDER_COUNT
         self.MIN_CONFIDENCE_SCORE = scanner_filters.MIN_SCORE
