@@ -322,9 +322,9 @@ class AdvancedAIEngine:
         self.feature_scaler = RobustScaler()
         self.price_scaler = StandardScaler()
 
-        # Training data
-        self.training_data = []
-        self.validation_data = []
+        # Training data (using deque with maxlen to prevent memory leak)
+        self.training_data = deque(maxlen=10000)  # Keep last 10k trades
+        self.validation_data = deque(maxlen=2000)  # Keep last 2k validation samples
 
         # Performance tracking
         self.performance_metrics = {
