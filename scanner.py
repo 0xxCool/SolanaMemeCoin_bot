@@ -127,8 +127,12 @@ class HighPerformanceScanner:
                     self.endpoint_failures[current_url] = self.endpoint_failures.get(current_url, 0) + 1
 
                     logger.exception(
-                        f"❌ WebSocket 502 Bad Gateway Fehler bei Endpoint #{self.current_wss_endpoint_index + 1} "
-                        f"(Versuch {consecutive_502_errors}/{max_502_before_rotation}): {current_url}"
+                        "❌ WebSocket 502 Bad Gateway Fehler bei Endpoint #%d "
+                        "(Versuch %d/%d): %s",
+                        self.current_wss_endpoint_index + 1,
+                        consecutive_502_errors,
+                        max_502_before_rotation,
+                        current_url,
                     )
 
                     # Nach mehreren 502-Fehlern zum nächsten Endpoint wechseln
@@ -141,14 +145,14 @@ class HighPerformanceScanner:
                         consecutive_502_errors = 0
                         backoff = 1  # Schneller Retry bei Endpoint-Wechsel
                 else:
-                    logger.exception(f"❌ WebSocket HTTP {e.status_code} Fehler: {e}")
+                    logger.exception("❌ WebSocket HTTP %s Fehler", e.status_code)
 
             except websockets.exceptions.ConnectionClosed as e:
                 logger.warning(f"⚠️ WebSocket Verbindung geschlossen: {e}")
 
             except OSError as e:
                 # Netzwerk-Fehler (Connection refused, timeout, etc.)
-                logger.exception(f"❌ Netzwerk-Fehler bei WebSocket-Verbindung: {e}")
+                logger.exception("❌ Netzwerk-Fehler bei WebSocket-Verbindung")
                 self.endpoint_failures[current_url] = self.endpoint_failures.get(current_url, 0) + 1
 
                 # Bei wiederholten Netzwerk-Fehlern Endpoint wechseln
@@ -411,12 +415,21 @@ class HighPerformanceScanner:
             # Wait for cancellations
             await asyncio.gather(*self.workers, return_exceptions=True)
 
-        # Step 4: Process remaining queue items
+        # Step 4: Cancel any remaining message handler tasks
+        if self.message_tasks:
+            logger.info(f"Cancelling {len(self.message_tasks)} pending message tasks")
+            for task in list(self.message_tasks):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*self.message_tasks, return_exceptions=True)
+            self.message_tasks.clear()
+
+        # Step 5: Process remaining queue items
         remaining = self.processing_queue.qsize()
         if remaining > 0:
             logger.warning(f"⚠️ {remaining} items left in queue (not processed)")
 
-        # Step 5: Cleanup
+        # Step 6: Cleanup
         await analyzer.cleanup()
 
         logger.info("✅ Scanner stopped cleanly")
