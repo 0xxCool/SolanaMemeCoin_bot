@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 import heapq
 
 from config import DEXSCREENER_WSS_URL, ENABLE_SNIPING_MODE
-import analyzer
+from analyzer import analyzer
 import telegram_bot
 
 # ✅ Setup logging
@@ -267,8 +267,8 @@ class HighPerformanceScanner:
                         from integration import process_token
                         await process_token(priority_pair.pair_data)
                     except ImportError:
-                        # Fallback to traditional analyzer
-                        await analyzer.analyze_streamed_pair(priority_pair.pair_data)
+                        # Fallback to traditional analyzer (✅ Fixed method name)
+                        await analyzer.analyze_token(priority_pair.pair_data)
 
                     process_time = time.time() - start_time
                     self.stats['processed'] += 1

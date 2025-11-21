@@ -23,7 +23,7 @@ except ImportError:
     logging.warning("Auto-Trader not available")
 
 import scanner
-import analyzer
+from analyzer import analyzer
 import trader
 from config import scanner_filters
 

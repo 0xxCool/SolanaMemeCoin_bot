@@ -52,6 +52,7 @@ class TradingBot:
     def __init__(self):
         self.scanner_task: Optional[asyncio.Task] = None
         self.telegram_app = None
+        self.telegram_initialized = False  # Track if telegram was fully initialized
         self.running = False
         self.start_time = time.time()
         self.health_runner: Optional[Any] = None
@@ -104,6 +105,15 @@ class TradingBot:
             logger.error(f"❌ Telegram Bot Fehler: {e}")
             raise
             
+        # Initialisiere Analyzer
+        logger.info("🔄 Initialisiere Analyzer...")
+        try:
+            await analyzer.ensure_initialized()
+            logger.info("✅ Analyzer initialisiert")
+        except Exception as e:
+            logger.error(f"❌ Analyzer Initialisierung fehlgeschlagen: {e}")
+            raise
+
         # Initialisiere Trader mit Wallet aus Environment
         logger.info("🔄 Initialisiere Trading Module...")
         try:
@@ -186,31 +196,38 @@ Health: http://localhost:8000/health
         try:
             # Initialisiere Bot
             await self.initialize()
-            
+
+            # ✅ Initialisiere Telegram Application explizit
+            logger.info("🔄 Initialisiere Telegram Application...")
+            await self.telegram_app.initialize()
+            await self.telegram_app.start()
+            self.telegram_initialized = True
+            logger.info("✅ Telegram Application bereit")
+
             # Starte Scanner automatisch
             await self.start_scanner()
-            
-            # Starte Telegram Bot
+
+            # ✅ Starte Telegram Bot Polling manuell (ohne run_polling)
             logger.info("🔄 Starte Telegram Bot Polling...")
-            
-            # Run both Telegram polling and periodic tasks
-            await asyncio.gather(
-                self.telegram_app.run_polling(
-                    allowed_updates=Update.ALL_TYPES,
-                    drop_pending_updates=True
-                ),
-                self.periodic_tasks(),
-                return_exceptions=True
+            await self.telegram_app.updater.start_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True
             )
-            
+
+            # Run periodic tasks
+            await self.periodic_tasks()
+
         except KeyboardInterrupt:
             logger.info("⚠️ Keyboard Interrupt empfangen")
         except Exception as e:
-            logger.error(f"❌ Kritischer Fehler: {e}")
-            await telegram_bot.send_message(
-                f"❌ *Bot Fehler:*\n`{str(e)[:200]}`",
-                important=True
-            )
+            logger.error(f"❌ Kritischer Fehler: {e}", exc_info=True)
+            try:
+                await telegram_bot.send_message(
+                    f"❌ *Bot Fehler:*\n`{str(e)[:200]}`",
+                    important=True
+                )
+            except Exception:
+                pass  # Telegram könnte bereits down sein
         finally:
             await self.shutdown()
             
@@ -256,21 +273,48 @@ Scanner Queue: {scanner.processing_queue.qsize()}
             except Exception as e:
                 logger.warning(f"⚠️ Audit log warning: {e}")
 
+        # Sende Shutdown Message (vor dem Stoppen des Telegram Bots)
+        try:
+            await telegram_bot.send_message(
+                "🛑 *Bot gestoppt*\n"
+                f"Laufzeit: {(time.time() - self.start_time) / 60:.0f} Minuten",
+                important=True
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ Shutdown message warning: {e}")
+
         # Stoppe Scanner
         if self.scanner_task:
-            await scanner.stop()
+            try:
+                await scanner.stop()
+            except Exception as e:
+                logger.warning(f"⚠️ Scanner stop warning: {e}")
 
         # Schließe alle Positionen wenn gewünscht
         if trader.positions:
-            await telegram_bot.send_message(
-                f"⚠️ *{len(trader.positions)} offene Positionen!*\n"
-                "Verwende /sell <address> um manuell zu schließen.",
-                important=True
-            )
+            try:
+                await telegram_bot.send_message(
+                    f"⚠️ *{len(trader.positions)} offene Positionen!*\n"
+                    "Verwende /sell <address> um manuell zu schließen.",
+                    important=True
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Position warning message failed: {e}")
 
-        # Cleanup
-        await analyzer.cleanup()
-        await trader.cleanup()
+        # Cleanup Components
+        try:
+            from analyzer import analyzer
+            if hasattr(analyzer, 'cleanup'):
+                await analyzer.cleanup()
+                logger.info("✅ Analyzer cleanup abgeschlossen")
+        except Exception as e:
+            logger.warning(f"⚠️ Analyzer cleanup warning: {e}")
+
+        try:
+            await trader.cleanup()
+            logger.info("✅ Trader cleanup abgeschlossen")
+        except Exception as e:
+            logger.warning(f"⚠️ Trader cleanup warning: {e}")
 
         # Stop health check server
         if HEALTH_AVAILABLE and self.health_runner:
@@ -280,12 +324,20 @@ Scanner Queue: {scanner.processing_queue.qsize()}
             except Exception as e:
                 logger.warning(f"⚠️ Health Check cleanup warning: {e}")
 
-        # Sende Shutdown Message
-        await telegram_bot.send_message(
-            "🛑 *Bot gestoppt*\n"
-            f"Laufzeit: {(time.time() - self.start_time) / 60:.0f} Minuten",
-            important=True
-        )
+        # ✅ Stoppe Telegram Application sauber (only if it was fully initialized)
+        if self.telegram_app and self.telegram_initialized:
+            try:
+                logger.info("🔄 Stoppe Telegram Bot...")
+                # Stop updater/polling
+                if self.telegram_app.updater and self.telegram_app.updater.running:
+                    await self.telegram_app.updater.stop()
+                # Stop application
+                await self.telegram_app.stop()
+                # Shutdown application
+                await self.telegram_app.shutdown()
+                logger.info("✅ Telegram Bot gestoppt")
+            except Exception as e:
+                logger.warning(f"⚠️ Telegram shutdown warning: {e}")
 
         logger.info("✅ Bot sauber heruntergefahren")
 
