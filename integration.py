@@ -209,8 +209,8 @@ class IntegrationManager:
         if self.ai_enabled:
             try:
                 stats['ai_stats'] = await get_ai_stats()
-            except Exception as e:
-                logger.error(f"Failed to get AI stats: {e}")
+            except (AttributeError, ImportError, RuntimeError) as e:
+                logger.exception(f"Failed to get AI stats: {e}")
                 stats['ai_stats'] = {}
 
         if self.auto_trader_enabled:

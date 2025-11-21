@@ -951,12 +951,12 @@ class Trader:
                     key_array = json.loads(private_key)
                     # Validate it's a list
                     if not isinstance(key_array, list):
-                        raise ValueError("Expected JSON array")
+                        raise TypeError("Expected JSON array")
                     self.keypair = Keypair.from_bytes(bytes(key_array))
                     print(f"✅ Loaded wallet from JSON array private key")
                 except Exception as e2:
                     # DON'T log the actual keys!
-                    raise ValueError(f"❌ Failed to decode PRIVATE_KEY. Try Base58 or JSON array format.\nError: Invalid key format")
+                    raise ValueError("❌ Failed to decode PRIVATE_KEY. Try Base58 or JSON array format.\nError: Invalid key format") from None
         else:
             self.keypair = keypair
 
