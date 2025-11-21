@@ -161,7 +161,7 @@ install_dependencies() {
     CRITICAL_PACKAGES=(
         "solana"
         "solders"
-        "telegram"
+        "python-telegram-bot"
         "aiohttp"
         "websockets"
         "pandas"
@@ -170,7 +170,7 @@ install_dependencies() {
 
     for package in "${CRITICAL_PACKAGES[@]}"; do
         if pip show "$package" &> /dev/null; then
-            VERSION=$(pip show "$package" | grep Version | awk '{print $2}')
+            VERSION=$(pip show "$package" 2>/dev/null | grep "^Version:" | awk '{print $2}')
             print_success "$package: $VERSION"
         else
             print_error "$package not installed"
@@ -442,7 +442,7 @@ import sys
 required_modules = [
     ('solana', 'Solana SDK'),
     ('solders', 'Solana Data Structures'),
-    ('telegram', 'Telegram Bot'),
+    ('telegram.ext', 'Telegram Bot'),
     ('aiohttp', 'Async HTTP'),
     ('websockets', 'WebSocket'),
     ('pandas', 'Data Analysis'),
@@ -478,7 +478,8 @@ PYTHON_SCRIPT
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env with explicit path to avoid heredoc issues
+load_dotenv('.env')
 
 required_vars = [
     'PRIVATE_KEY',
