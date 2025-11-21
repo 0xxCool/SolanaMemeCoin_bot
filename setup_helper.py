@@ -223,7 +223,7 @@ def check_dependencies() -> Dict[str, Dict]:
                 module = importlib.import_module('nacl')
             else:
                 # Only allow known safe packages
-                safe_packages = {'aiohttp', 'websockets', 'solders', 'solana', 'base58', 'aiosqlite'}
+                safe_packages = {'aiohttp', 'websockets', 'solders', 'solana', 'aiosqlite', 'pandas', 'numpy', 'torch', 'tensorflow', 'sqlalchemy'}
                 if package in safe_packages:
                     module = importlib.import_module(package)
                 else:

@@ -31,7 +31,7 @@ class SecurityManager:
             logger.warning("No SECRET_KEY set! Using default (INSECURE for production)")
             self.secret_key = "default_insecure_key_change_me"
 
-        self.salt_path = Path("config/encryption.salt")
+        self.salt_path = Path(__file__).parent / "config" / "encryption.salt"
         self.salt = self._load_or_generate_salt()
         self.cipher = self._init_cipher()
         self.audit_log_path = Path("logs/audit.log")
