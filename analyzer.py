@@ -106,48 +106,53 @@ class EnhancedAnalyzer:
         self.pattern_detector = PatternDetector()
         self.social_analyzer = SocialSentimentAnalyzer()
         self._initialized = False
-        self._initializing = False
+        self._init_event = asyncio.Event()
+        self._init_event.set()  # Initially ready to initialize
 
     async def ensure_initialized(self):
         """Stellt sicher, dass die Initialisierung durchgeführt wurde"""
         if self._initialized:
             return
 
-        if self._initializing:
-            # Warte, bis die Initialisierung abgeschlossen ist
-            while self._initializing:
-                await asyncio.sleep(0.1)
+        # Wait for permission to initialize (only one caller proceeds)
+        await self._init_event.wait()
+
+        # Double-check after acquiring the event
+        if self._initialized:
             return
 
-        self._initializing = True
+        self._init_event.clear()  # Block other callers
         try:
             await self._initialize()
             self._initialized = True
         finally:
-            self._initializing = False
+            self._init_event.set()  # Unblock waiting callers
 
     async def _initialize(self):
         """Initialisiert Async Clients und Session"""
         global async_clients
-        
-        # Erstelle mehrere RPC Clients für Load Balancing
-        async_clients = [AsyncClient(RPC_URL)]
-        for backup_url in BACKUP_RPC_URLS[:2]:  # Max 2 Backups
-            try:
-                client = AsyncClient(backup_url)
-                async_clients.append(client)
-            except (ConnectionError, TimeoutError) as e:
-                logger.warning(f"Could not connect to backup RPC {backup_url}: {e}")
-            except Exception as e:
-                logger.error(
-                    f"Unexpected error connecting to {backup_url}: {e}",
-                    exc_info=True
+
+        try:
+            # Erstelle mehrere RPC Clients für Load Balancing
+            async_clients = [AsyncClient(RPC_URL)]
+            for backup_url in BACKUP_RPC_URLS[:2]:  # Max 2 Backups
+                try:
+                    client = AsyncClient(backup_url)
+                    async_clients.append(client)
+                except (ConnectionError, TimeoutError) as e:
+                    logger.warning(f"Could not connect to backup RPC {backup_url}: {e}")
+                except Exception as e:
+                    logger.error(
+                        f"Unexpected error connecting to {backup_url}: {e}",
+                        exc_info=True
+                    )
+        finally:
+            # Always create session, even if RPC setup partially failed
+            if self.session is None:
+                self.session = aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=5),
+                    connector=aiohttp.TCPConnector(limit=100, limit_per_host=30)
                 )
-                
-        self.session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=5),
-            connector=aiohttp.TCPConnector(limit=100, limit_per_host=30)
-        )
         
     async def analyze_token(self, pair_data: Dict[str, Any],
                           early_signal: Optional[EarlySignal] = None) -> Optional[EnhancedTokenMetrics]:
@@ -617,3 +622,6 @@ class SocialSentimentAnalyzer:
 
 # Global instance
 analyzer = EnhancedAnalyzer()
+
+# Backward compatibility alias
+Analyzer = EnhancedAnalyzer
