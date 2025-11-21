@@ -105,8 +105,27 @@ class EnhancedAnalyzer:
         self.cache = {}  # Cache für bereits analysierte Token
         self.pattern_detector = PatternDetector()
         self.social_analyzer = SocialSentimentAnalyzer()
-        self.init_task = asyncio.create_task(self._initialize())
-        
+        self._initialized = False
+        self._initializing = False
+
+    async def ensure_initialized(self):
+        """Stellt sicher, dass die Initialisierung durchgeführt wurde"""
+        if self._initialized:
+            return
+
+        if self._initializing:
+            # Warte, bis die Initialisierung abgeschlossen ist
+            while self._initializing:
+                await asyncio.sleep(0.1)
+            return
+
+        self._initializing = True
+        try:
+            await self._initialize()
+            self._initialized = True
+        finally:
+            self._initializing = False
+
     async def _initialize(self):
         """Initialisiert Async Clients und Session"""
         global async_clients
@@ -130,11 +149,14 @@ class EnhancedAnalyzer:
             connector=aiohttp.TCPConnector(limit=100, limit_per_host=30)
         )
         
-    async def analyze_token(self, pair_data: Dict[str, Any], 
+    async def analyze_token(self, pair_data: Dict[str, Any],
                           early_signal: Optional[EarlySignal] = None) -> Optional[EnhancedTokenMetrics]:
         """
         Hauptanalyse-Funktion mit ML und Mempool Integration
         """
+        # Stelle sicher, dass die Initialisierung durchgeführt wurde
+        await self.ensure_initialized()
+
         try:
             # Basis-Daten extrahieren
             metrics = EnhancedTokenMetrics(

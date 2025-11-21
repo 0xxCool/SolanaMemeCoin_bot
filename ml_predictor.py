@@ -128,36 +128,58 @@ class MLPredictor:
             'precision': 0.0,
             'profit_correlation': 0.0
         }
-        
+
         # Model Paths
         self.model_dir = "ml_models"
         os.makedirs(self.model_dir, exist_ok=True)
-        
+
         # Online Learning Parameters
         self.retrain_threshold = 100  # Retrain after N new samples
         self.new_samples = []
-        
+
         # Feature Importance Tracking
         self.feature_importance = {}
+
+        # Initialization flag
+        self._initialized = False
+        self._initializing = False
         
-        # Initialize
-        asyncio.create_task(self._initialize())
-        
+    async def ensure_initialized(self):
+        """Stellt sicher, dass die Initialisierung durchgeführt wurde"""
+        if self._initialized:
+            return
+
+        if self._initializing:
+            # Warte, bis die Initialisierung abgeschlossen ist
+            while self._initializing:
+                await asyncio.sleep(0.1)
+            return
+
+        self._initializing = True
+        try:
+            await self._initialize()
+            self._initialized = True
+        finally:
+            self._initializing = False
+
     async def _initialize(self):
         """Lädt oder trainiert Models"""
         try:
             # Versuche existierende Models zu laden
             await self.load_models()
             print("✅ ML Models geladen")
-        except:
+        except Exception as e:
             # Trainiere neue Models mit Beispieldaten
-            print("🔄 Trainiere neue ML Models...")
+            print(f"🔄 Trainiere neue ML Models... (Grund: {e})")
             await self.train_initial_models()
-            
+
     async def predict(self, token_metrics: Dict) -> PredictionResult:
         """
         Hauptvorhersage-Funktion
         """
+        # Stelle sicher, dass die Modelle initialisiert sind
+        await self.ensure_initialized()
+
         try:
             # Extract Features
             features = await self._extract_features(token_metrics)
@@ -296,7 +318,7 @@ class MLPredictor:
                 proba = self.models['returns'].predict_proba([[predicted_return]])
                 model_confidence = np.max(proba)
                 confidence = (confidence + model_confidence) / 2
-            except:
+            except Exception:
                 pass
                 
         return np.clip(confidence, 0, 1)
@@ -638,7 +660,7 @@ class MLPredictor:
         try:
             # Würde von Disk/Database geladen
             return None, None
-        except:
+        except Exception:
             return None, None
             
     def _fallback_prediction(self, metrics: Dict) -> PredictionResult:

@@ -335,12 +335,31 @@ class AdvancedAIEngine:
         self.model_dir = "ai_models"
         os.makedirs(self.model_dir, exist_ok=True)
 
-        # Load existing models if available
-        asyncio.create_task(self.load_models())
+        # Initialization flags
+        self._initialized = False
+        self._initializing = False
 
         # Training scheduler
         self.last_training = time.time()
         self.training_interval = 3600  # Retrain every hour
+
+    async def ensure_initialized(self):
+        """Stellt sicher, dass die Initialisierung durchgeführt wurde"""
+        if self._initialized:
+            return
+
+        if self._initializing:
+            # Warte, bis die Initialisierung abgeschlossen ist
+            while self._initializing:
+                await asyncio.sleep(0.1)
+            return
+
+        self._initializing = True
+        try:
+            await self.load_models()
+            self._initialized = True
+        finally:
+            self._initializing = False
 
     async def load_models(self):
         """Load pre-trained models"""
@@ -422,6 +441,9 @@ class AdvancedAIEngine:
         Complete prediction using all models
         Returns comprehensive analysis and recommendation
         """
+        # Stelle sicher, dass die Modelle initialisiert sind
+        await self.ensure_initialized()
+
         # Extract and prepare features
         features = await self._extract_features(token_data)
 
@@ -556,7 +578,7 @@ class AdvancedAIEngine:
                 if hasattr(model, 'predict'):
                     pred = model.predict(features.reshape(1, -1))[0]
                     predictions.append(pred)
-            except:
+            except Exception:
                 pass
 
         if predictions:
