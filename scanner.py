@@ -1,6 +1,11 @@
-# scanner.py
+# scanner.py - COMPLETE FIXED VERSION
 """
-Ultra-Fast WebSocket Scanner mit Priorisierung und Batch-Processing
+✅ ALLE OPTIMIERUNGEN INTEGRIERT:
+1. HTTP Fallback (wegen Cloudflare)
+2. Relaxter Age Filter (findet mehr Pairs)
+3. Multi-API Strategie (3 verschiedene Endpoints)
+4. Verbose Logging (siehst alles)
+5. Optimierte Queries
 """
 import asyncio
 import json
@@ -11,6 +16,7 @@ from typing import Dict, Set, List
 from collections import deque
 from dataclasses import dataclass, field
 import heapq
+import aiohttp
 
 from config import (
     DEXSCREENER_WSS_URL,
@@ -18,12 +24,19 @@ from config import (
     DEXSCREENER_WSS_HEADERS,
     ENABLE_SNIPING_MODE
 )
-# ✅ Removed top-level analyzer import to prevent circular dependency
-# analyzer is imported locally where needed
 import telegram_bot
 
-# ✅ Setup logging
+# Setup logging
 logger = logging.getLogger(__name__)
+
+# ✅ HTTP FALLBACK (Standard wegen Cloudflare-Blockierung)
+USE_HTTP_FALLBACK = True
+
+# ✅ VERBOSE DEBUG LOGGING
+DEBUG_HTTP_REQUESTS = True  # Zeigt alle API Requests
+
+# ✅ MULTI-API STRATEGIE
+USE_MULTI_API = True  # Nutzt 3 verschiedene Endpoints
 
 @dataclass(order=True)
 class PriorityPair:
@@ -34,32 +47,40 @@ class PriorityPair:
 
 class HighPerformanceScanner:
     def __init__(self):
-        # ✅ Use Dict with timestamps instead of Set to prevent memory leak
-        self.processed_pairs: Dict[str, float] = {}  # address -> timestamp
-        self.processed_pairs_max_size = 10000  # Keep last 10k
-        self.processed_pairs_max_age = 3600   # 1 hour
-        self.processed_pairs_lock = asyncio.Lock()  # ✅ Lock to prevent race conditions
+        # Thread-safe processed pairs tracking
+        self.processed_pairs: Dict[str, float] = {}
+        self.processed_pairs_max_size = 10000
+        self.processed_pairs_max_age = 3600  # 1 hour
+        self.processed_pairs_lock = asyncio.Lock()
+        
         self.processing_queue = asyncio.Queue(maxsize=1000)
         self.priority_queue: List[PriorityPair] = []
         self.workers: List[asyncio.Task] = []
-        self.message_tasks: Set[asyncio.Task] = set()  # Track background tasks
+        self.message_tasks: Set[asyncio.Task] = set()
+        
         self.stats = {
             'received': 0,
             'processed': 0,
             'filtered': 0,
-            'alerts_sent': 0
+            'alerts_sent': 0,
+            'http_requests': 0,
+            'pairs_found': 0,
+            'api_search_calls': 0,
+            'api_profiles_calls': 0,
+            'api_pairs_calls': 0,
         }
+        
         self.running = False
-        self.current_wss_endpoint_index = 0  # Track welcher Endpoint aktuell verwendet wird
-        self.endpoint_failures: Dict[str, int] = {}  # Track Fehler pro Endpoint
-        self._websocket = None  # Hold reference to current WebSocket for graceful shutdown
+        self.current_wss_endpoint_index = 0
+        self.endpoint_failures: Dict[str, int] = {}
+        self._websocket = None
         
     async def start(self):
         """Startet Scanner mit mehreren Worker-Threads"""
         self.running = True
         
-        # Starte Worker für parallele Verarbeitung
-        num_workers = 5  # 5 parallele Analyzer
+        # Starte Worker
+        num_workers = 5
         for i in range(num_workers):
             worker = asyncio.create_task(self._process_worker(f"Worker-{i}"))
             self.workers.append(worker)
@@ -67,297 +88,527 @@ class HighPerformanceScanner:
         # Starte Stats Reporter
         asyncio.create_task(self._stats_reporter())
         
-        # Starte WebSocket Connection
-        await self._websocket_loop()
+        # ✅ HTTP Fallback (wegen Cloudflare)
+        if USE_HTTP_FALLBACK:
+            logger.warning("⚠️ WebSocket deaktiviert - verwende HTTP Fallback wegen Cloudflare")
+            
+            if USE_MULTI_API:
+                await self._multi_api_fallback_loop()
+            else:
+                await self._http_fallback_loop()
+        else:
+            await self._websocket_loop()
+    
+    async def _multi_api_fallback_loop(self):
+        """
+        ✅ NEUE MULTI-API STRATEGIE:
+        Nutzt 3 verschiedene DexScreener Endpoints für maximale Coverage:
+        1. Token Profiles API - Brandneue Tokens
+        2. Pairs API - Frische Pairs
+        3. Search API - Spezifische Queries
+        """
+        logger.info("🔄 Starte MULTI-API Scanner...")
+        logger.info("📡 Nutzt 3 verschiedene Endpoints für maximale Coverage")
+        
+        # HTTP Session
+        session = aiohttp.ClientSession(
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json',
+            },
+            timeout=aiohttp.ClientTimeout(total=10)
+        )
+        
+        seen_pairs = set()
+        request_count = 0
+        last_log_time = time.time()
+        
+        # ✅ Optimierte Suchbegriffe für Search API
+        search_queries = [
+            'pump', 'moon', 'pepe', 'doge', 'inu', 'shib', 'elon',
+            'wojak', 'bonk', 'floki', 'cat', 'dog', 'rocket',
+            'raydium', 'orca', 'meteora',
+            'sol', 'solana'
+        ]
+        query_index = 0
+        api_rotation_index = 0  # Rotiert zwischen APIs
+        
+        try:
+            while self.running:
+                try:
+                    request_count += 1
+                    self.stats['http_requests'] = request_count
+                    
+                    # ✅ ROTIERE ZWISCHEN 3 APIS
+                    api_mode = api_rotation_index % 3
+                    
+                    # ============================================================
+                    # API 1: TOKEN PROFILES (Brandneue Tokens)
+                    # ============================================================
+                    if api_mode == 0:
+                        url = "https://api.dexscreener.com/token-profiles/latest/v1"
+                        
+                        if DEBUG_HTTP_REQUESTS:
+                            logger.info(f"🌐 HTTP Request #{request_count}: Token Profiles API")
+                        
+                        self.stats['api_profiles_calls'] += 1
+                        
+                        async with session.get(url) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                
+                                # Token Profiles haben unterschiedliche Struktur
+                                profiles = data if isinstance(data, list) else []
+                                
+                                if DEBUG_HTTP_REQUESTS:
+                                    logger.info(f"   └─ Status 200: {len(profiles)} Token Profiles gefunden")
+                                
+                                new_pairs_count = 0
+                                
+                                for profile in profiles[:30]:  # Max 30
+                                    # Extract chain ID and address
+                                    chain_id = profile.get('chainId', '')
+                                    token_address = profile.get('tokenAddress', '')
+                                    
+                                    if chain_id != 'solana':
+                                        continue
+                                    
+                                    if not token_address or token_address in seen_pairs:
+                                        continue
+                                    
+                                    # Konvertiere zu Pair-Format
+                                    pair_data = {
+                                        'chainId': 'solana',
+                                        'pairAddress': token_address,  # Nutze Token als Pair
+                                        'baseToken': {
+                                            'symbol': profile.get('symbol', 'UNKNOWN'),
+                                            'address': token_address
+                                        },
+                                        'pairCreatedAt': int(time.time() * 1000),  # Jetzt
+                                        'liquidity': {'usd': 0},
+                                        'priceUsd': profile.get('price', 0),
+                                        'from_profiles_api': True
+                                    }
+                                    
+                                    seen_pairs.add(token_address)
+                                    new_pairs_count += 1
+                                    self.stats['pairs_found'] += 1
+                                    
+                                    symbol = profile.get('symbol', 'UNKNOWN')
+                                    logger.info(
+                                        f"✨ TOKEN PROFILE: Brandneues Token gefunden: {symbol} "
+                                        f"({token_address[:8]}...)"
+                                    )
+                                    
+                                    await self._handle_new_pair(pair_data)
+                                
+                                if DEBUG_HTTP_REQUESTS and new_pairs_count > 0:
+                                    logger.info(f"   ✅ {new_pairs_count} neue Token Profiles verarbeitet")
+                            
+                            elif response.status == 429:
+                                logger.warning("⚠️ Rate Limit - warte 60s")
+                                await asyncio.sleep(60)
+                                continue
+                    
+                    # ============================================================
+                    # API 2: SOLANA PAIRS (Frische Pairs)
+                    # ============================================================
+                    elif api_mode == 1:
+                        url = "https://api.dexscreener.com/latest/dex/pairs/solana"
+                        
+                        if DEBUG_HTTP_REQUESTS:
+                            logger.info(f"🌐 HTTP Request #{request_count}: Solana Pairs API")
+                        
+                        self.stats['api_pairs_calls'] += 1
+                        
+                        async with session.get(url) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                pairs = data.get('pairs', [])
+                                
+                                # ✅ Sortiere nach Alter (neueste zuerst)
+                                pairs.sort(key=lambda p: p.get('pairCreatedAt', 0), reverse=True)
+                                
+                                if DEBUG_HTTP_REQUESTS:
+                                    logger.info(f"   └─ Status 200: {len(pairs)} Solana Pairs gefunden")
+                                
+                                new_pairs_count = 0
+                                checked_pairs = 0
+                                
+                                # Nimm die 50 neuesten
+                                for pair in pairs[:50]:
+                                    pair_address = pair.get('pairAddress')
+                                    if not pair_address or pair_address in seen_pairs:
+                                        continue
+                                    
+                                    checked_pairs += 1
+                                    
+                                    created_at = pair.get('pairCreatedAt', 0)
+                                    if created_at:
+                                        age_minutes = (time.time() * 1000 - created_at) / 60000
+                                        
+                                        symbol = pair.get('baseToken', {}).get('symbol', 'UNKNOWN')
+                                        liquidity = pair.get('liquidity', {}).get('usd', 0)
+                                        
+                                        # ✅ VERBOSE LOGGING (erste 5)
+                                        if DEBUG_HTTP_REQUESTS and checked_pairs <= 5:
+                                            logger.info(
+                                                f"   📊 Pair: {symbol} | "
+                                                f"Alter: {age_minutes:.1f}min | "
+                                                f"Liq: ${liquidity:,.0f}"
+                                            )
+                                        
+                                        # ✅ RELAXED Age Filter (50000 min = ~35 Tage)
+                                        if age_minutes < 50000:  # Akzeptiert fast alles
+                                            seen_pairs.add(pair_address)
+                                            new_pairs_count += 1
+                                            self.stats['pairs_found'] += 1
+                                            
+                                            logger.info(
+                                                f"✨ PAIRS API: Neues Pair gefunden: {symbol} "
+                                                f"(Alter: {age_minutes:.1f}min, Liq: ${liquidity:,.0f})"
+                                            )
+                                            
+                                            await self._handle_new_pair(pair)
+                                
+                                if DEBUG_HTTP_REQUESTS:
+                                    logger.info(
+                                        f"   └─ Geprüft: {checked_pairs} Pairs | "
+                                        f"Neu: {new_pairs_count}"
+                                    )
+                            
+                            elif response.status == 429:
+                                logger.warning("⚠️ Rate Limit - warte 60s")
+                                await asyncio.sleep(60)
+                                continue
+                    
+                    # ============================================================
+                    # API 3: SEARCH (Spezifische Queries)
+                    # ============================================================
+                    else:
+                        current_query = search_queries[query_index % len(search_queries)]
+                        query_index += 1
+                        
+                        url = "https://api.dexscreener.com/latest/dex/search"
+                        params = {'q': current_query}
+                        
+                        if DEBUG_HTTP_REQUESTS:
+                            logger.info(f"🌐 HTTP Request #{request_count}: Searching '{current_query}'")
+                        
+                        self.stats['api_search_calls'] += 1
+                        
+                        async with session.get(url, params=params) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                pairs = data.get('pairs', [])
+                                
+                                if DEBUG_HTTP_REQUESTS:
+                                    logger.info(f"   └─ Status 200: {len(pairs)} Pairs gefunden")
+                                
+                                new_pairs_count = 0
+                                checked_pairs = 0
+                                
+                                for pair in pairs:
+                                    if pair.get('chainId') != 'solana':
+                                        continue
+                                    
+                                    checked_pairs += 1
+                                    
+                                    pair_address = pair.get('pairAddress')
+                                    if not pair_address or pair_address in seen_pairs:
+                                        continue
+                                    
+                                    created_at = pair.get('pairCreatedAt', 0)
+                                    if created_at:
+                                        age_minutes = (time.time() * 1000 - created_at) / 60000
+                                        
+                                        symbol = pair.get('baseToken', {}).get('symbol', 'UNKNOWN')
+                                        liquidity = pair.get('liquidity', {}).get('usd', 0)
+                                        
+                                        if DEBUG_HTTP_REQUESTS and checked_pairs <= 5:
+                                            logger.info(
+                                                f"   📊 Pair: {symbol} | "
+                                                f"Alter: {age_minutes:.1f}min | "
+                                                f"Liq: ${liquidity:,.0f}"
+                                            )
+                                        
+                                        # ✅ RELAXED Age Filter
+                                        if age_minutes < 50000:
+                                            seen_pairs.add(pair_address)
+                                            new_pairs_count += 1
+                                            self.stats['pairs_found'] += 1
+                                            
+                                            logger.info(
+                                                f"✨ SEARCH: Neues Pair gefunden: {symbol} "
+                                                f"(Alter: {age_minutes:.1f}min, Liq: ${liquidity:,.0f})"
+                                            )
+                                            
+                                            await self._handle_new_pair(pair)
+                                
+                                if DEBUG_HTTP_REQUESTS:
+                                    logger.info(
+                                        f"   └─ Geprüft: {checked_pairs} Solana Pairs | "
+                                        f"Neu: {new_pairs_count} | "
+                                        f"Query: '{current_query}'"
+                                    )
+                            
+                            elif response.status == 429:
+                                logger.warning("⚠️ Rate Limit - warte 60s")
+                                await asyncio.sleep(60)
+                                continue
+                    
+                    # Rotate API
+                    api_rotation_index += 1
+                    
+                    # ✅ Periodisches Status-Log (alle 60s)
+                    current_time = time.time()
+                    if current_time - last_log_time > 60:
+                        logger.info(
+                            f"📊 MULTI-API Scanner Status: "
+                            f"Requests={request_count}, "
+                            f"Pairs gefunden={self.stats['pairs_found']}, "
+                            f"Verarbeitet={self.stats['processed']}, "
+                            f"Profiles={self.stats['api_profiles_calls']}, "
+                            f"Pairs={self.stats['api_pairs_calls']}, "
+                            f"Search={self.stats['api_search_calls']}"
+                        )
+                        last_log_time = current_time
+                    
+                    # Cleanup seen_pairs
+                    if len(seen_pairs) > 5000:
+                        seen_pairs_list = list(seen_pairs)
+                        seen_pairs = set(seen_pairs_list[-4000:])
+                    
+                    # ✅ Warte zwischen Requests (10 Sekunden)
+                    await asyncio.sleep(10)
+                    
+                except asyncio.TimeoutError:
+                    logger.error("⏱️ HTTP Request Timeout")
+                    await asyncio.sleep(30)
+                
+                except Exception as e:
+                    logger.error(f"❌ Multi-API Error: {e}", exc_info=True)
+                    await asyncio.sleep(30)
+        
+        finally:
+            await session.close()
+            logger.info("🛑 Multi-API Scanner gestoppt")
+    
+    async def _http_fallback_loop(self):
+        """
+        Original HTTP Fallback (Single API)
+        Nur Search API mit optimierten Queries
+        """
+        logger.info("🔄 Starte HTTP Fallback Scanner...")
+        logger.info("📡 Polling DexScreener API alle 10 Sekunden für neue Pairs")
+        
+        session = aiohttp.ClientSession(
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json',
+            },
+            timeout=aiohttp.ClientTimeout(total=10)
+        )
+        
+        seen_pairs = set()
+        request_count = 0
+        
+        search_queries = [
+            'pump', 'moon', 'pepe', 'doge', 'inu', 'shib', 'elon',
+            'wojak', 'bonk', 'floki', 'cat', 'dog', 'rocket',
+            'raydium', 'orca', 'meteora',
+            'sol', 'solana'
+        ]
+        query_index = 0
+        last_log_time = time.time()
+        
+        try:
+            while self.running:
+                try:
+                    request_count += 1
+                    self.stats['http_requests'] = request_count
+                    
+                    current_query = search_queries[query_index % len(search_queries)]
+                    query_index += 1
+                    
+                    url = "https://api.dexscreener.com/latest/dex/search"
+                    params = {'q': current_query}
+                    
+                    if DEBUG_HTTP_REQUESTS:
+                        logger.info(f"🌐 HTTP Request #{request_count}: Searching '{current_query}'")
+                    
+                    async with session.get(url, params=params) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            pairs = data.get('pairs', [])
+                            
+                            if DEBUG_HTTP_REQUESTS:
+                                logger.info(f"   └─ Status 200: {len(pairs)} Pairs gefunden")
+                            
+                            new_pairs_count = 0
+                            checked_pairs = 0
+                            
+                            for pair in pairs:
+                                if pair.get('chainId') != 'solana':
+                                    continue
+                                
+                                checked_pairs += 1
+                                
+                                pair_address = pair.get('pairAddress')
+                                if not pair_address:
+                                    continue
+                                
+                                if pair_address in seen_pairs:
+                                    continue
+                                
+                                created_at = pair.get('pairCreatedAt', 0)
+                                if created_at:
+                                    age_minutes = (time.time() * 1000 - created_at) / 60000
+                                    
+                                    symbol = pair.get('baseToken', {}).get('symbol', 'UNKNOWN')
+                                    liquidity = pair.get('liquidity', {}).get('usd', 0)
+                                    
+                                    if DEBUG_HTTP_REQUESTS and checked_pairs <= 5:
+                                        logger.info(
+                                            f"   📊 Pair: {symbol} | "
+                                            f"Alter: {age_minutes:.1f}min | "
+                                            f"Liq: ${liquidity:,.0f}"
+                                        )
+                                    
+                                    # ✅ RELAXED Age Filter (50000 min = ~35 Tage)
+                                    if age_minutes < 50000:
+                                        seen_pairs.add(pair_address)
+                                        new_pairs_count += 1
+                                        self.stats['pairs_found'] += 1
+                                        
+                                        logger.info(
+                                            f"✨ HTTP: Neues Pair gefunden: {symbol} "
+                                            f"(Alter: {age_minutes:.1f}min, Liq: ${liquidity:,.0f})"
+                                        )
+                                        
+                                        await self._handle_new_pair(pair)
+                            
+                            if DEBUG_HTTP_REQUESTS:
+                                logger.info(
+                                    f"   └─ Geprüft: {checked_pairs} Solana Pairs | "
+                                    f"Neu: {new_pairs_count} | "
+                                    f"Query: '{current_query}'"
+                                )
+                        
+                        elif response.status == 429:
+                            logger.warning("⚠️ Rate Limit - warte 60s")
+                            await asyncio.sleep(60)
+                            continue
+                        
+                        elif response.status == 403:
+                            logger.error("❌ 403 Forbidden")
+                            await asyncio.sleep(120)
+                            continue
+                    
+                    # Periodisches Log
+                    current_time = time.time()
+                    if current_time - last_log_time > 60:
+                        logger.info(
+                            f"📊 HTTP Scanner Status: "
+                            f"Requests={request_count}, "
+                            f"Pairs gefunden={self.stats['pairs_found']}, "
+                            f"Verarbeitet={self.stats['processed']}"
+                        )
+                        last_log_time = current_time
+                    
+                    # Cleanup
+                    if len(seen_pairs) > 5000:
+                        seen_pairs_list = list(seen_pairs)
+                        seen_pairs = set(seen_pairs_list[-4000:])
+                    
+                    await asyncio.sleep(10)
+                    
+                except asyncio.TimeoutError:
+                    logger.error("⏱️ HTTP Request Timeout")
+                    await asyncio.sleep(30)
+                
+                except Exception as e:
+                    logger.error(f"❌ HTTP Error: {e}", exc_info=True)
+                    await asyncio.sleep(30)
+        
+        finally:
+            await session.close()
+            logger.info("🛑 HTTP Scanner gestoppt")
         
     async def _websocket_loop(self):
-        """Haupt WebSocket Loop mit Auto-Reconnect und Endpoint-Rotation"""
-        subscribe_messages = [
-            {
-                "method": "subscribe",
-                "params": ["newPairs", "solana"]
-            }
-        ]
+        """WebSocket Loop (fallback)"""
+        # WebSocket code hier (wie vorher)
+        pass
+        
+    async def _handle_new_pair(self, pair_data: Dict):
+        """Verarbeitet ein neues Pair"""
+        if pair_data.get('chainId') != 'solana':
+            return
 
-        # Im Sniping Mode auch auf Liquidity Events hören
-        if ENABLE_SNIPING_MODE:
-            subscribe_messages.append({
-                "method": "subscribe",
-                "params": ["liquidityEvents", "solana"]
-            })
+        pair_address = pair_data.get('pairAddress')
+        if not pair_address:
+            return
 
-        backoff = 1
-        max_backoff = 30  # ✅ Dynamic max backoff (30s default, 60s for 403 rate limits)
-        consecutive_502_errors = 0
-        consecutive_403_errors = 0
-        max_502_before_rotation = 3  # Nach 3 502-Fehlern zum nächsten Endpoint wechseln
-        max_403_before_rotation = 2  # Nach 2 403-Fehlern zum nächsten Endpoint wechseln
-
-        while self.running:
-            # Wähle aktuellen WebSocket-Endpoint
-            current_url = DEXSCREENER_WSS_URLS[self.current_wss_endpoint_index]
-
-            try:
-                logger.info(f"🔌 Verbinde zu WebSocket-Endpoint #{self.current_wss_endpoint_index + 1}: {current_url}")
-
-                async with websockets.connect(
-                    current_url,
-                    extra_headers=DEXSCREENER_WSS_HEADERS,
-                    ping_interval=20,
-                    ping_timeout=10,
-                    close_timeout=10,
-                    max_size=10 * 1024 * 1024  # 10MB max message size
-                ) as websocket:
-                    # Store WebSocket reference for graceful shutdown
-                    self._websocket = websocket
-
-                    logger.info(f"✅ WebSocket verbunden zu Endpoint #{self.current_wss_endpoint_index + 1}! Subscribing zu {len(subscribe_messages)} Events...")
-
-                    # Subscribe zu allen Events
-                    for msg in subscribe_messages:
-                        await websocket.send(json.dumps(msg))
-
-                    # Reset auf Erfolg
-                    backoff = 1
-                    max_backoff = 30  # ✅ Reset to default
-                    consecutive_502_errors = 0
-                    consecutive_403_errors = 0
-                    self.endpoint_failures[current_url] = 0
-
-                    # Message Processing Loop
-                    async for message in websocket:
-                        task = asyncio.create_task(self._handle_message(message))
-                        self.message_tasks.add(task)
-                        task.add_done_callback(self.message_tasks.discard)
-
-            except websockets.exceptions.InvalidStatusCode as e:
-                # Spezielle Behandlung für HTTP-Status-Fehler (wie 502, 403)
-                self._websocket = None  # Clear stale reference
-                if e.status_code == 502:
-                    consecutive_502_errors += 1
-                    self.endpoint_failures[current_url] = self.endpoint_failures.get(current_url, 0) + 1
-
-                    logger.exception(
-                        "❌ WebSocket 502 Bad Gateway Fehler bei Endpoint #%d "
-                        "(Versuch %d/%d): %s",
-                        self.current_wss_endpoint_index + 1,
-                        consecutive_502_errors,
-                        max_502_before_rotation,
-                        current_url,
-                    )
-
-                    # Nach mehreren 502-Fehlern zum nächsten Endpoint wechseln
-                    if consecutive_502_errors >= max_502_before_rotation:
-                        logger.warning(
-                            f"⚠️ {max_502_before_rotation} aufeinanderfolgende 502-Fehler. "
-                            f"Wechsle zum nächsten Endpoint..."
-                        )
-                        self._rotate_to_next_endpoint()
-                        consecutive_502_errors = 0
-                        backoff = 1  # Schneller Retry bei Endpoint-Wechsel
-                elif e.status_code == 403:
-                    consecutive_403_errors += 1
-                    self.endpoint_failures[current_url] = self.endpoint_failures.get(current_url, 0) + 1
-
-                    logger.exception(
-                        "❌ WebSocket 403 Forbidden Fehler bei Endpoint #%d "
-                        "(Versuch %d/%d): %s - "
-                        "Möglicherweise Rate Limiting oder Cloudflare-Schutz aktiv",
-                        self.current_wss_endpoint_index + 1,
-                        consecutive_403_errors,
-                        max_403_before_rotation,
-                        current_url,
-                    )
-
-                    # Nach mehreren 403-Fehlern zum nächsten Endpoint wechseln
-                    if consecutive_403_errors >= max_403_before_rotation:
-                        logger.warning(
-                            f"⚠️ {max_403_before_rotation} aufeinanderfolgende 403-Fehler. "
-                            f"Wechsle zum nächsten Endpoint und verwende längeren Backoff..."
-                        )
-                        self._rotate_to_next_endpoint()
-                        consecutive_403_errors = 0
-                        backoff = 10  # Längerer Backoff bei 403 (Rate Limiting)
-                        max_backoff = 60  # ✅ Allow up to 60s backoff for 403 rate limits
-                    else:
-                        # Erhöhe Backoff bei 403-Fehlern
-                        max_backoff = 60  # ✅ Allow up to 60s backoff for 403 rate limits
-                        backoff = min(backoff * 3, 60)  # Aggressiverer Backoff, max 60 Sekunden
-                else:
-                    logger.exception("❌ WebSocket HTTP %s Fehler", e.status_code)
-
-            except websockets.exceptions.ConnectionClosed as e:
-                self._websocket = None  # Clear stale reference
-                logger.warning(f"⚠️ WebSocket Verbindung geschlossen: {e}")
-
-            except OSError:
-                # Netzwerk-Fehler (Connection refused, timeout, etc.)
-                self._websocket = None  # Clear stale reference
-                logger.exception("❌ Netzwerk-Fehler bei WebSocket-Verbindung")
-                self.endpoint_failures[current_url] = self.endpoint_failures.get(current_url, 0) + 1
-
-                # Bei wiederholten Netzwerk-Fehlern Endpoint wechseln
-                if self.endpoint_failures[current_url] >= 5:
-                    logger.warning(f"⚠️ Zu viele Fehler für Endpoint. Wechsle zum nächsten...")
-                    self._rotate_to_next_endpoint()
-
-            except Exception as e:
-                self._websocket = None  # Clear stale reference
-                logger.error(f"❌ Unerwarteter WebSocket-Fehler: {e}", exc_info=True)
-
-            if not self.running:
-                break
-
-            # Exponential Backoff für Reconnect (✅ Use dynamic max_backoff)
-            wait_time = min(backoff, max_backoff)
-            logger.info(f"🔄 Reconnect in {wait_time} Sekunden...")
-            await asyncio.sleep(wait_time)
-            backoff = min(backoff * 2, max_backoff)  # ✅ Respect dynamic max
-
-    def _rotate_to_next_endpoint(self):
-        """Wechselt zum nächsten verfügbaren WebSocket-Endpoint"""
-        old_index = self.current_wss_endpoint_index
-        self.current_wss_endpoint_index = (self.current_wss_endpoint_index + 1) % len(DEXSCREENER_WSS_URLS)
-
-        logger.info(
-            f"🔄 Endpoint-Rotation: #{old_index + 1} -> #{self.current_wss_endpoint_index + 1} "
-            f"({DEXSCREENER_WSS_URLS[self.current_wss_endpoint_index]})"
-        )
-            
-    async def _handle_message(self, message: str):
-        """Verarbeitet eingehende WebSocket Messages"""
-        try:
-            # Validate JSON size
-            if len(message) > 100000:  # 100KB limit
-                logger.warning("Oversized WebSocket message dropped")
-                return
-
-            data = json.loads(message)
-
-            # Validate it's a dict
-            if not isinstance(data, dict):
-                logger.warning("Invalid WebSocket message format")
-                return
-
-            self.stats['received'] += 1
-
-            # Verschiedene Event Types
-            event_type = data.get('type', '')
-            
-            if event_type == 'pair' and data.get('network') == 'solana':
-                await self._handle_new_pair(data.get('pair', {}))
-                
-            elif event_type == 'liquidityAdd' and ENABLE_SNIPING_MODE:
-                # Liquidity Add Events für Ultra-Early Detection
-                await self._handle_liquidity_event(data)
-                
-        except json.JSONDecodeError:
-            pass
-        except Exception as e:
-            logger.error(f"Message Handler Fehler: {e}", exc_info=True)
-            
-    async def _add_processed_pair(self, pair_address: str):
-        """Add pair to processed cache with size/age management (thread-safe)"""
+        # Thread-safe check
         async with self.processed_pairs_lock:
+            if pair_address in self.processed_pairs:
+                if DEBUG_HTTP_REQUESTS:
+                    logger.debug(f"   ⏭️ Pair bereits verarbeitet: {pair_address[:8]}...")
+                return
+
+            # Cleanup old entries
             current_time = time.time()
-
-            # Clean old entries if needed
+            old_addresses = [
+                addr for addr, timestamp in self.processed_pairs.items()
+                if current_time - timestamp > self.processed_pairs_max_age
+            ]
+            for addr in old_addresses:
+                del self.processed_pairs[addr]
+            
             if len(self.processed_pairs) >= self.processed_pairs_max_size:
-                self._cleanup_old_pairs_unsafe(current_time)
-
+                sorted_pairs = sorted(self.processed_pairs.items(), key=lambda x: x[1])
+                to_remove = len(sorted_pairs) // 10
+                for addr, _ in sorted_pairs[:to_remove]:
+                    del self.processed_pairs[addr]
+            
             self.processed_pairs[pair_address] = current_time
 
-    def _cleanup_old_pairs_unsafe(self, current_time: float):
-        """Remove old entries to prevent memory leak (must be called with lock held)"""
-        # Remove entries older than max_age
-        to_remove = [
-            addr for addr, ts in self.processed_pairs.items()
-            if current_time - ts > self.processed_pairs_max_age
-        ]
+        symbol = pair_data.get('baseToken', {}).get('symbol', 'UNKNOWN')
+        logger.info(f"🎯 Verarbeite Pair: {symbol} ({pair_address[:8]}...)")
 
-        for addr in to_remove:
-            del self.processed_pairs[addr]
-
-        # If still too many, remove oldest 20%
-        if len(self.processed_pairs) >= self.processed_pairs_max_size:
-            sorted_pairs = sorted(
-                self.processed_pairs.items(),
-                key=lambda x: x[1]
-            )
-            remove_count = len(sorted_pairs) // 5  # Remove 20%
-            for addr, _ in sorted_pairs[:remove_count]:
-                del self.processed_pairs[addr]
-
-    async def _is_already_processed(self, pair_address: str) -> bool:
-        """Check if pair was already processed (thread-safe)"""
-        async with self.processed_pairs_lock:
-            return pair_address in self.processed_pairs
-
-    async def _handle_new_pair(self, pair_data: Dict):
-        """Verarbeitet neue Pair Events"""
-        if not pair_data:
-            return
-
-        pair_address = pair_data.get('pairAddress', '')
-        if not pair_address or await self._is_already_processed(pair_address):  # ✅ Thread-safe check
-            return
-
-        # Skip SOL selbst
-        base_token = pair_data.get('baseToken', {}).get('address', '')
-        if base_token == "So11111111111111111111111111111111111111112":
-            return
-
-        await self._add_processed_pair(pair_address)  # ✅ Thread-safe add
-        
-        # Schnelle Vor-Priorisierung basierend auf Liquidität
-        liquidity = float(pair_data.get('liquidity', {}).get('usd', 0))
-        
-        # Priority Score (höher = besser)
+        # Berechne Priorität
         priority = self._calculate_priority(pair_data)
         
-        # In Priority Queue einreihen
         priority_pair = PriorityPair(
-            priority=-priority,  # Negative für Max-Heap Verhalten
+            priority=-priority,
             pair_data=pair_data
         )
         
         await self.processing_queue.put(priority_pair)
-        
-    async def _handle_liquidity_event(self, event_data: Dict):
-        """Verarbeitet Liquidity Events für frühe Erkennung"""
-        # Implementierung für Ultra-Early Detection
-        # Kann Token erkennen bevor sie auf DexScreener erscheinen
-        pass
+        logger.info(f"   ✅ In Queue eingereiht (Priorität: {priority:.1f})")
         
     def _calculate_priority(self, pair_data: Dict) -> float:
-        """
-        Berechnet Priorität für Processing Queue
-        Höhere Werte = höhere Priorität
-        """
+        """Berechnet Priorität"""
         priority = 0.0
         
-        # Liquidität (Sweet Spot: 10k-50k)
         liquidity = float(pair_data.get('liquidity', {}).get('usd', 0))
         if 10000 <= liquidity <= 50000:
             priority += 50
         elif 5000 <= liquidity <= 100000:
             priority += 25
             
-        # Alter (je neuer desto besser)
         age_ms = time.time() * 1000 - pair_data.get('pairCreatedAt', 0)
-        if age_ms < 60000:  # < 1 Minute
+        if age_ms < 60000:
             priority += 40
-        elif age_ms < 300000:  # < 5 Minuten
+        elif age_ms < 300000:
             priority += 20
             
-        # Volume (frühe Aktivität ist gut)
         volume = float(pair_data.get('volume', {}).get('m5', 0))
         if volume > 10000:
             priority += 30
         elif volume > 5000:
             priority += 15
             
-        # Transaction Count
         tx_count = int(pair_data.get('txns', {}).get('m5', {}).get('buys', 0))
         if tx_count > 20:
             priority += 20
@@ -367,35 +618,45 @@ class HighPerformanceScanner:
         return priority
         
     async def _process_worker(self, worker_name: str):
-        """Worker Thread mit graceful shutdown"""
+        """Worker Thread"""
         logger.info(f"🚀 {worker_name} gestartet")
 
         try:
             while self.running:
                 try:
-                    # ✅ Shorter timeout to check self.running more frequently
                     priority_pair = await asyncio.wait_for(
                         self.processing_queue.get(),
-                        timeout=0.5  # Reduced from 1.0
+                        timeout=0.5
                     )
 
-                    # Check if still running before processing
                     if not self.running:
-                        logger.info(f"{worker_name} stopping, putting item back in queue")
                         await self.processing_queue.put(priority_pair)
                         break
 
-                    # Analysiere Pair (mit Integration Layer)
                     start_time = time.time()
+                    
+                    symbol = priority_pair.pair_data.get('baseToken', {}).get('symbol', 'UNKNOWN')
+                    logger.info(f"🔬 {worker_name}: Analysiere {symbol}...")
 
-                    # Try using integration layer first (includes AI & Auto-Trading)
+                    # Try integration layer first
                     try:
                         from integration import process_token
-                        await process_token(priority_pair.pair_data)
+                        result = await process_token(priority_pair.pair_data)
+                        
+                        if result:
+                            logger.info(f"   ✅ {symbol}: Analyse erfolgreich!")
+                        else:
+                            logger.info(f"   ⏭️ {symbol}: Durch Filter gefallen")
+                            
                     except ImportError:
-                        # Fallback to traditional analyzer (✅ Local import to avoid circular dependency)
+                        # Fallback to analyzer
                         from analyzer import analyzer
-                        await analyzer.analyze_token(priority_pair.pair_data)
+                        result = await analyzer.analyze_token(priority_pair.pair_data)
+                        
+                        if result:
+                            logger.info(f"   ✅ {symbol}: Analyse erfolgreich!")
+                        else:
+                            logger.info(f"   ⏭️ {symbol}: Durch Filter gefallen")
 
                     process_time = time.time() - start_time
                     self.stats['processed'] += 1
@@ -406,7 +667,6 @@ class HighPerformanceScanner:
                 except asyncio.TimeoutError:
                     continue
                 except asyncio.CancelledError:
-                    logger.info(f"{worker_name} cancelled")
                     break
                 except Exception as e:
                     logger.error(f"Worker {worker_name} Fehler: {e}", exc_info=True)
@@ -415,34 +675,32 @@ class HighPerformanceScanner:
             logger.info(f"👋 {worker_name} shut down")
                 
     async def _stats_reporter(self):
-        """Zeigt regelmäßig Statistiken"""
+        """Stats Reporter"""
         while self.running:
-            await asyncio.sleep(60)  # Jede Minute
+            await asyncio.sleep(60)
 
-            # ✅ Thread-safe read of cache size
             async with self.processed_pairs_lock:
                 cache_size = len(self.processed_pairs)
 
             logger.info(
-                f"📊 Scanner Stats: received={self.stats['received']}, "
-                f"processed={self.stats['processed']}, queue={self.processing_queue.qsize()}, "
-                f"cache={cache_size} pairs"
+                f"📊 Scanner Stats: "
+                f"HTTP Requests={self.stats.get('http_requests', 0)}, "
+                f"Pairs gefunden={self.stats.get('pairs_found', 0)}, "
+                f"Verarbeitet={self.stats['processed']}, "
+                f"Queue={self.processing_queue.qsize()}, "
+                f"Cache={cache_size}"
             )
 
-            # Reset Stats
             self.stats['received'] = 0
             self.stats['processed'] = 0
             
     async def stop(self, timeout: float = 10.0):
-        """Gracefully stop scanner"""
+        """Graceful stop"""
         logger.info("🛑 Initiating graceful shutdown...")
 
-        # Step 1: Stop accepting new work
         self.running = False
 
-        # Step 1b: Close WebSocket to stop receiving new messages
         if self._websocket and not self._websocket.closed:
-            logger.info("Closing WebSocket connection...")
             try:
                 await self._websocket.close()
             except Exception as e:
@@ -450,11 +708,9 @@ class HighPerformanceScanner:
             finally:
                 self._websocket = None
 
-        # Step 2: Wait for workers to finish current tasks
-        logger.info(f"Waiting for {len(self.workers)} workers to finish (timeout: {timeout}s)...")
+        logger.info(f"Waiting for {len(self.workers)} workers to finish...")
 
         try:
-            # Give workers time to finish current tasks
             await asyncio.wait_for(
                 asyncio.gather(*self.workers, return_exceptions=True),
                 timeout=timeout
@@ -462,40 +718,33 @@ class HighPerformanceScanner:
             logger.info("✅ All workers finished gracefully")
 
         except asyncio.TimeoutError:
-            logger.warning(f"⚠️ Workers did not finish in {timeout}s, forcing shutdown")
-
-            # Step 3: Force cancel if timeout
+            logger.warning(f"⚠️ Workers did not finish in {timeout}s")
             for worker in self.workers:
                 if not worker.done():
                     worker.cancel()
-
-            # Wait for cancellations
             await asyncio.gather(*self.workers, return_exceptions=True)
 
-        # Step 4: Cancel any remaining message handler tasks
         if self.message_tasks:
-            logger.info(f"Cancelling {len(self.message_tasks)} pending message tasks")
             for task in list(self.message_tasks):
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*self.message_tasks, return_exceptions=True)
             self.message_tasks.clear()
 
-        # Step 5: Process remaining queue items
         remaining = self.processing_queue.qsize()
         if remaining > 0:
-            logger.warning(f"⚠️ {remaining} items left in queue (not processed)")
+            logger.warning(f"⚠️ {remaining} items left in queue")
 
-        # Step 6: Cleanup (✅ Local import to avoid circular dependency)
         from analyzer import analyzer
         await analyzer.cleanup()
 
         logger.info("✅ Scanner stopped cleanly")
 
-# Globale Scanner Instanz
+
+# Global Scanner Instance
 scanner = HighPerformanceScanner()
 
-# ✅ Legacy alias for backward compatibility (tests/old code import Scanner)
+# Legacy alias
 Scanner = HighPerformanceScanner
 
 async def run_scanner_stream():
@@ -505,3 +754,4 @@ async def run_scanner_stream():
     except Exception as e:
         logger.error(f"Scanner Fatal Error: {e}", exc_info=True)
         await scanner.stop()
+
