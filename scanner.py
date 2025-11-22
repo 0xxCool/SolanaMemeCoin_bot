@@ -17,6 +17,7 @@ from collections import deque
 from dataclasses import dataclass, field
 import heapq
 import aiohttp
+import random
 
 from config import (
     DEXSCREENER_WSS_URL,
@@ -33,7 +34,9 @@ logger = logging.getLogger(__name__)
 USE_HTTP_FALLBACK = True
 
 # ✅ VERBOSE DEBUG LOGGING
-DEBUG_HTTP_REQUESTS = True  # Zeigt alle API Requests
+DEBUG_HTTP_REQUESTS = False  # Zeigt alle API Requests
+LOG_NEW_TOKENS = True        # Nur neue Tokens
+LOG_PASSED_FILTERS = True    # Nur erfolgreiche Analysen
 
 # ✅ MULTI-API STRATEGIE
 USE_MULTI_API = True  # Nutzt 3 verschiedene Endpoints
@@ -139,8 +142,10 @@ class HighPerformanceScanner:
                     request_count += 1
                     self.stats['http_requests'] = request_count
                     
-                    # ✅ ROTIERE ZWISCHEN 3 APIS
-                    api_mode = api_rotation_index % 3
+                    # ✅ INTELLIGENTE GEWICHTETE ROTATION
+                    # 50% Token Profiles, 35% Solana Pairs, 15% Search
+                    weights = [0.50, 0.35, 0.15]
+                    api_mode = random.choices([0, 1, 2], weights=weights)[0]
                     
                     # ============================================================
                     # API 1: TOKEN PROFILES (Brandneue Tokens)
@@ -380,7 +385,7 @@ class HighPerformanceScanner:
                         seen_pairs = set(seen_pairs_list[-4000:])
                     
                     # ✅ Warte zwischen Requests (10 Sekunden)
-                    await asyncio.sleep(10)
+                    await asyncio.sleep(3)
                     
                 except asyncio.TimeoutError:
                     logger.error("⏱️ HTTP Request Timeout")
@@ -414,10 +419,11 @@ class HighPerformanceScanner:
         request_count = 0
         
         search_queries = [
-            'pump', 'moon', 'pepe', 'doge', 'inu', 'shib', 'elon',
-            'wojak', 'bonk', 'floki', 'cat', 'dog', 'rocket',
-            'raydium', 'orca', 'meteora',
-            'sol', 'solana'
+            "pump",      # Sehr aktiv
+            "raydium",   # DEX-spezifisch
+            "orca",      # DEX-spezifisch
+            "jupiter",   # Aggregator
+            "bonk",      # Populär
         ]
         query_index = 0
         last_log_time = time.time()
