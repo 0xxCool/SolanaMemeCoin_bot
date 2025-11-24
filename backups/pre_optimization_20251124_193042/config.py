@@ -7,16 +7,6 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 # ==============================================================================
-# PROXY CONFIGURATION (für WebSocket & HTTP)
-# ==============================================================================
-# Residential Proxies für DexScreener (optional)
-# Format: "http://username:password@host:port"
-ROTATING_PROXIES = [
-    # Beispiel: "http://user:pass@proxy1.example.com:8080",
-    # Beispiel: "http://user:pass@proxy2.example.com:8080",
-]
-
-# ==============================================================================
 # API & RPC ENDPOINTS
 # ==============================================================================
 # WebSocket URLs für DexScreener - Mit Fallback-Optionen
@@ -42,11 +32,11 @@ DEXSCREENER_WSS_HEADERS = {
     "Pragma": "no-cache",
 }
 
-RPC_URL = os.getenv("RPC_URL", "https://mainnet.helius-rpc.com/?api-key=d41f7804-f0da-406e-9d84-253cfd1c0f57")
-# Backup RPCs für Failover (nur Helius!)
+RPC_URL = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")
+# Backup RPCs für Failover
 BACKUP_RPC_URLS = [
-    "https://mainnet.helius-rpc.com/?api-key=d41f7804-f0da-406e-9d84-253cfd1c0f57",
-    # Free RPC removed - causes rate limits!
+    "https://solana-api.projectserum.com",
+    "https://api.mainnet-beta.solana.com"
 ]
 
 # API Endpoints
@@ -61,36 +51,36 @@ DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/{}"
 # ==============================================================================
 @dataclass
 class ScannerFilters:
-    """Scanner Filter - Optimiert für frühe Memecoin-Erkennung"""
-
-    # Liquidität - PRODUCTION (Early Entry)
-    MIN_LIQUIDITY_USD: float = 100         # $100+ (catches micro-caps)
-    MAX_LIQUIDITY_USD: float = 2000000     # Max 2M
-
-    # Alter - PRODUCTION (Ultra-Fresh Tokens!)
-    MIN_AGE_MINUTES: float = 0.1           # 6 seconds minimum
-    MAX_AGE_MINUTES: float = 60            # 1 hour maximum (early entry!)
-
-    # Holder - RELAXED
-    MIN_HOLDER_COUNT: int = 3              # Minimum (weniger für neue Tokens)
-    MAX_HOLDER_COUNT: int = 15000          # Erweitert
-    MAX_TOP_10_PERCENTAGE: float = 50      # Relaxed
-    MIN_LP_PERCENTAGE: float = 70          # Etwas lockerer
-
-    # Volume & Trading - PRODUCTION (Relaxed for early entry)
-    MIN_VOLUME_USD: float = 50             # $50+ minimum volume
-    MIN_TXS_COUNT: int = 3                 # At least 3 transactions
-    MAX_PRICE_IMPACT_PERCENT: float = 5    # 5% max slippage
-    MIN_SCORE: float = 25                  # Score 25+ (balanced: quality + quantity)
+    # VORHER → NACHHER
+    
+    # Liquidität - OK, nur leicht anpassen
+    MIN_LIQUIDITY_USD: float = 2000        # war: 5000
+    MAX_LIQUIDITY_USD: float = 1000000     # war: 500000
+    
+    # Alter - KRITISCHE ÄNDERUNG
+    MIN_AGE_MINUTES: float = 0.1           # war: 0.5
+    MAX_AGE_MINUTES: float = 360           # war: 10 ← HAUPTPROBLEM!
+    
+    # Holder - Relaxieren
+    MIN_HOLDER_COUNT: int = 5             # war: 50
+    MAX_HOLDER_COUNT: int = 10000          # war: 5000
+    MAX_TOP_10_PERCENTAGE: float = 40      # war: 30
+    MIN_LP_PERCENTAGE: float = 80          # war: 90
+    
+    # Volume - Stark relaxieren
+    MIN_VOLUME_USD: float = 500           # war: 10000 ← KRITISCH!
+    MIN_TXS_COUNT: int = 5                 # war: 20
+    MAX_PRICE_IMPACT_PERCENT: float = 3    # war: 2
+    MIN_SCORE: float = 40                  # war: 70
 
 # ==============================================================================
 # TRADING PARAMETER
 # ==============================================================================
 @dataclass
 class TradingConfig:
-    # Position Sizing - CONSERVATIVE für Testing Phase
-    BASE_TRADE_AMOUNT_SOL: float = 0.01  # Nur $2.50 per Trade (CONSERVATIVE)
-    MAX_TRADE_AMOUNT_SOL: float = 0.05   # Max $12.50 (CONSERVATIVE)
+    # Position Sizing - Dynamisch basierend auf Score
+    BASE_TRADE_AMOUNT_SOL: float = 0.05  # Basis-Betrag
+    MAX_TRADE_AMOUNT_SOL: float = 0.5    # Maximum bei perfektem Score
     POSITION_SCALING: Dict[str, float] = None  # Score -> Multiplikator
     
     # Slippage - Dynamisch basierend auf Liquidität

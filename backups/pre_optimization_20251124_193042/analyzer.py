@@ -259,25 +259,25 @@ class EnhancedAnalyzer:
                     scanner_filters.MAX_HOLDER_COUNT):
                 return False
             
-        # Distribution (PRODUCTION)
+        # Distribution
         if metrics.top_10_percentage > scanner_filters.MAX_TOP_10_PERCENTAGE:
             return False
-
+            
         # Volume (relaxed für sehr neue Token)
         if metrics.age_minutes > 1:
             if metrics.volume_usd_5m < scanner_filters.MIN_VOLUME_USD:
                 return False
-
+            
         # Transaktionen
         if metrics.age_minutes > 2:
             if metrics.tx_count_5m < scanner_filters.MIN_TXS_COUNT:
                 return False
-
-        # Honeypot Check (PRODUCTION)
+            
+        # Honeypot Check
         if metrics.is_honeypot:
             return False
-
-        # High Risk Check (PRODUCTION)
+            
+        # High Risk Check (außer bei starken ML Signalen)
         if metrics.risk_level == 'critical' and metrics.ml_predicted_return < 100:
             return False
             

@@ -394,15 +394,15 @@ class MultiRegionRPC:
                 'https://rpc.helius.xyz/?api-key=KEY'
             ],
             'us_west': [
-                'https://mainnet.helius-rpc.com/?api-key=d41f7804-f0da-406e-9d84-253cfd1c0f57',
-                'https://solana-api.projectserum.com'
+                'https://solana-api.projectserum.com',
+                'https://api.mainnet-beta.solana.com'
             ],
             'eu': [
-                'https://mainnet.helius-rpc.com/?api-key=d41f7804-f0da-406e-9d84-253cfd1c0f57',
+                'https://solana-mainnet.eu.chainstack.com/KEY',
                 'https://rpc.ankr.com/solana'
             ],
             'asia': [
-                'https://mainnet.helius-rpc.com/?api-key=d41f7804-f0da-406e-9d84-253cfd1c0f57'
+                'https://api.mainnet-beta.solana.com'
             ]
         }
         
@@ -474,9 +474,9 @@ class MultiRegionRPC:
         for url, healthy in self.health_status.items():
             if healthy:
                 return url
-
-        # Last resort - Use Helius!
-        return "https://mainnet.helius-rpc.com/?api-key=d41f7804-f0da-406e-9d84-253cfd1c0f57"
+                
+        # Last resort
+        return "https://api.mainnet-beta.solana.com"
         
     async def _monitor_health(self):
         """Continuously monitor RPC health"""
@@ -657,8 +657,8 @@ class JupiterDEX:
 
             print(f"✅ Transaction signed, sending to Solana...")
 
-            # Get RPC URL from environment or use Helius
-            rpc_url = os.getenv("RPC_URL", "https://mainnet.helius-rpc.com/?api-key=d41f7804-f0da-406e-9d84-253cfd1c0f57")
+            # Get RPC URL from environment or use default
+            rpc_url = os.getenv("RPC_URL", "https://api.mainnet-beta.solana.com")
 
             # Send the signed transaction
             client = AsyncClient(rpc_url)

@@ -99,3 +99,17 @@ prometheus-data/
 
 # Docker
 docker-compose.override.yml
+
+# Sensitive & Runtime
+.env
+*.log
+bot*.log
+production.log
+validation*.log
+
+# Database
+*.db
+*.db-journal
+
+# Backups (optional - keeping for now)
+# backups/

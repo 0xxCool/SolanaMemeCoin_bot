@@ -2,6 +2,8 @@
 python-dotenv==1.0.1
 aiohttp==3.11.11
 websockets==12.0
+
+# Telegram Bot
 python-telegram-bot==21.9
 
 # Solana SDK
@@ -13,23 +15,29 @@ base58==2.1.1
 pandas==2.2.3
 numpy==1.26.4
 
-# Machine Learning (MINIMAL)
+# Machine Learning & AI
 scikit-learn==1.5.2
 scipy==1.13.1
 joblib==1.4.2
 aiofiles==24.1.0
 
-# Database
+# Deep Learning
+torch==2.5.1
+torchvision==0.20.1
+tensorflow==2.18.0
+keras==3.7.0
+
+# Database (für Trade History)
 aiosqlite==0.20.0
 sqlalchemy==2.0.36
 
-# Monitoring
+# Monitoring & Logging
 prometheus-client==0.21.1
 colorlog==6.9.0
 
 # Performance
-uvloop==0.21.0
-orjson==3.10.12
+uvloop==0.21.0  # Schnellerer Event Loop (Linux/Mac)
+orjson==3.10.12  # Schnelleres JSON
 
 # Testing
 pytest==8.3.4

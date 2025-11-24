@@ -33,10 +33,10 @@ logger = logging.getLogger(__name__)
 # ✅ HTTP FALLBACK (Standard wegen Cloudflare-Blockierung)
 USE_HTTP_FALLBACK = True
 
-# ✅ OPTIMIZED DEBUG LOGGING
-DEBUG_HTTP_REQUESTS = False  # Nur bei Bedarf aktivieren
-LOG_NEW_TOKENS = True        # Wichtig: Behalten
-LOG_PASSED_FILTERS = False   # Zu verbose: Deaktiviert
+# ✅ VERBOSE DEBUG LOGGING
+DEBUG_HTTP_REQUESTS = True  # Zeigt alle API Requests
+LOG_NEW_TOKENS = True        # Nur neue Tokens
+LOG_PASSED_FILTERS = True    # Nur erfolgreiche Analysen
 
 # ✅ MULTI-API STRATEGIE
 USE_MULTI_API = True  # Nutzt 3 verschiedene Endpoints
@@ -104,297 +104,300 @@ class HighPerformanceScanner:
     
     async def _multi_api_fallback_loop(self):
         """
-        ✅ PARALLEL MULTI-API STRATEGIE:
-        Alle 3 APIs laufen GLEICHZEITIG für maximale Geschwindigkeit:
-        1. Token Profiles API - Brandneue Tokens (alle 5s)
-        2. Pairs API - Frische Pairs (alle 7s)
-        3. Search API - Spezifische Queries (alle 10s)
+        ✅ NEUE MULTI-API STRATEGIE:
+        Nutzt 3 verschiedene DexScreener Endpoints für maximale Coverage:
+        1. Token Profiles API - Brandneue Tokens
+        2. Pairs API - Frische Pairs
+        3. Search API - Spezifische Queries
         """
-        logger.info("🔄 Starte PARALLEL MULTI-API Scanner...")
-        logger.info("📡 Alle 3 Endpoints laufen gleichzeitig!")
-
-        # Shared HTTP Session für alle Tasks
-        self._http_session = aiohttp.ClientSession(
+        logger.info("🔄 Starte MULTI-API Scanner...")
+        logger.info("📡 Nutzt 3 verschiedene Endpoints für maximale Coverage")
+        
+        # HTTP Session
+        session = aiohttp.ClientSession(
             headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Accept': 'application/json',
             },
             timeout=aiohttp.ClientTimeout(total=15)
         )
-
-        # Shared seen_pairs Set für alle Tasks
-        self._seen_pairs = set()
-        self._seen_pairs_lock = asyncio.Lock()
-
-        try:
-            # ✅ PARALLEL: Starte alle 3 APIs gleichzeitig
-            tasks = [
-                asyncio.create_task(self._poll_token_profiles()),
-                asyncio.create_task(self._poll_solana_pairs()),
-                asyncio.create_task(self._poll_search()),
-            ]
-
-            logger.info("✅ 3 parallele API-Tasks gestartet!")
-
-            # Warte auf alle Tasks
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-        except Exception as e:
-            logger.error(f"❌ Parallel loop error: {e}", exc_info=True)
-            for task in tasks:
-                task.cancel()
-        finally:
-            await self._http_session.close()
-            logger.info("🛑 Multi-API Scanner gestoppt")
-
-    async def _poll_token_profiles(self):
-        """Kontinuierliches Polling von Token Profiles API (alle 5s)"""
-        logger.info("🟢 Token Profiles Poller gestartet (Intervall: 5s)")
-        url = "https://api.dexscreener.com/token-profiles/latest/v1"
+        
+        seen_pairs = set()
         request_count = 0
-
-        try:
-            while self.running:
-                try:
-                    request_count += 1
-                    self.stats['api_profiles_calls'] += 1
-
-                    async with self._http_session.get(url) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            profiles = data if isinstance(data, list) else []
-
-                            new_pairs_count = 0
-                            for profile in profiles[:50]:
-                                chain_id = profile.get('chainId', '')
-                                token_address = profile.get('tokenAddress', '')
-
-                                if chain_id != 'solana' or not token_address:
-                                    continue
-
-                                # Thread-safe check
-                                async with self._seen_pairs_lock:
-                                    if token_address in self._seen_pairs:
-                                        continue
-                                    self._seen_pairs.add(token_address)
-
-                                # Konvertiere zu Pair-Format
-                                pair_data = {
-                                    'chainId': 'solana',
-                                    'pairAddress': token_address,
-                                    'baseToken': {
-                                        'symbol': profile.get('symbol', 'UNKNOWN'),
-                                        'address': token_address
-                                    },
-                                    'pairCreatedAt': int(time.time() * 1000),
-                                    'liquidity': {'usd': 0},
-                                    'priceUsd': profile.get('price', 0),
-                                    'from_profiles_api': True
-                                }
-
-                                new_pairs_count += 1
-                                self.stats['pairs_found'] += 1
-
-                                symbol = profile.get('symbol', 'UNKNOWN')
-                                logger.info(f"✨ TOKEN PROFILE: {symbol} ({token_address[:8]}...)")
-
-                                await self._handle_new_pair(pair_data)
-
-                            if new_pairs_count > 0:
-                                logger.info(f"   ✅ {new_pairs_count} neue Token Profiles")
-
-                        elif response.status == 429:
-                            logger.warning("⚠️ Rate Limit - warte 60s")
-                            await asyncio.sleep(60)
-                            continue
-
-                    # Cleanup seen_pairs
-                    async with self._seen_pairs_lock:
-                        if len(self._seen_pairs) > 5000:
-                            pairs_list = list(self._seen_pairs)
-                            self._seen_pairs = set(pairs_list[-4000:])
-
-                    await asyncio.sleep(5)  # 5s Intervall
-
-                except asyncio.TimeoutError:
-                    logger.error("⏱️ Token Profiles Timeout")
-                    await asyncio.sleep(10)
-                except Exception as e:
-                    logger.error(f"❌ Token Profiles Error: {e}")
-                    await asyncio.sleep(10)
-
-        except Exception as e:
-            logger.error(f"❌ Token Profiles Fatal: {e}", exc_info=True)
-        finally:
-            logger.info("🛑 Token Profiles Poller gestoppt")
-
-    async def _poll_solana_pairs(self):
-        """Kontinuierliches Polling von Solana Pairs API (alle 7s)"""
-        logger.info("🟢 Solana Pairs Poller gestartet (Intervall: 7s)")
-        url = "https://api.dexscreener.com/latest/dex/pairs/solana"
-        request_count = 0
-
-        try:
-            while self.running:
-                try:
-                    request_count += 1
-                    self.stats['api_pairs_calls'] += 1
-
-                    async with self._http_session.get(url) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            pairs = data.get('pairs', [])
-
-                            # Sortiere nach Alter (neueste zuerst)
-                            pairs.sort(key=lambda p: p.get('pairCreatedAt', 0), reverse=True)
-
-                            new_pairs_count = 0
-                            for pair in pairs[:50]:
-                                pair_address = pair.get('pairAddress')
-                                if not pair_address:
-                                    continue
-
-                                # Thread-safe check
-                                async with self._seen_pairs_lock:
-                                    if pair_address in self._seen_pairs:
-                                        continue
-                                    self._seen_pairs.add(pair_address)
-
-                                created_at = pair.get('pairCreatedAt', 0)
-                                if created_at:
-                                    age_minutes = (time.time() * 1000 - created_at) / 60000
-
-                                    # Relaxed Age Filter
-                                    if age_minutes < 50000:
-                                        new_pairs_count += 1
-                                        self.stats['pairs_found'] += 1
-
-                                        symbol = pair.get('baseToken', {}).get('symbol', 'UNKNOWN')
-                                        liquidity = pair.get('liquidity', {}).get('usd', 0)
-
-                                        logger.info(
-                                            f"✨ PAIRS API: {symbol} "
-                                            f"(Alter: {age_minutes:.1f}min, Liq: ${liquidity:,.0f})"
-                                        )
-
-                                        await self._handle_new_pair(pair)
-
-                            if new_pairs_count > 0:
-                                logger.info(f"   ✅ {new_pairs_count} neue Pairs")
-
-                        elif response.status == 429:
-                            logger.warning("⚠️ Rate Limit - warte 60s")
-                            await asyncio.sleep(60)
-                            continue
-
-                    # Cleanup seen_pairs
-                    async with self._seen_pairs_lock:
-                        if len(self._seen_pairs) > 5000:
-                            pairs_list = list(self._seen_pairs)
-                            self._seen_pairs = set(pairs_list[-4000:])
-
-                    await asyncio.sleep(7)  # 7s Intervall
-
-                except asyncio.TimeoutError:
-                    logger.error("⏱️ Solana Pairs Timeout")
-                    await asyncio.sleep(10)
-                except Exception as e:
-                    logger.error(f"❌ Solana Pairs Error: {e}")
-                    await asyncio.sleep(10)
-
-        except Exception as e:
-            logger.error(f"❌ Solana Pairs Fatal: {e}", exc_info=True)
-        finally:
-            logger.info("🛑 Solana Pairs Poller gestoppt")
-
-    async def _poll_search(self):
-        """Kontinuierliches Polling mit Search Queries (alle 10s)"""
-        logger.info("🟢 Search Poller gestartet (Intervall: 10s)")
-        url = "https://api.dexscreener.com/latest/dex/search"
-
+        last_log_time = time.time()
+        
+        # ✅ Optimierte Suchbegriffe für Search API
         search_queries = [
             'pump', 'moon', 'pepe', 'doge', 'inu', 'shib', 'elon',
             'wojak', 'bonk', 'floki', 'cat', 'dog', 'rocket',
-            'raydium', 'orca', 'meteora', 'sol', 'solana'
+            'raydium', 'orca', 'meteora',
+            'sol', 'solana'
         ]
         query_index = 0
-        request_count = 0
-
+        api_rotation_index = 0  # Rotiert zwischen APIs
+        
         try:
             while self.running:
                 try:
                     request_count += 1
-                    self.stats['api_search_calls'] += 1
-
-                    current_query = search_queries[query_index % len(search_queries)]
-                    query_index += 1
-
-                    async with self._http_session.get(url, params={'q': current_query}) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            pairs = data.get('pairs', [])
-
-                            new_pairs_count = 0
-                            for pair in pairs:
-                                if pair.get('chainId') != 'solana':
-                                    continue
-
-                                pair_address = pair.get('pairAddress')
-                                if not pair_address:
-                                    continue
-
-                                # Thread-safe check
-                                async with self._seen_pairs_lock:
-                                    if pair_address in self._seen_pairs:
+                    self.stats['http_requests'] = request_count
+                    
+                    # ✅ INTELLIGENTE GEWICHTETE ROTATION
+                    # 50% Token Profiles, 35% Solana Pairs, 15% Search
+                    weights = [0.60, 0.30, 0.10]
+                    api_mode = random.choices([0, 1, 2], weights=weights)[0]
+                    
+                    # ============================================================
+                    # API 1: TOKEN PROFILES (Brandneue Tokens)
+                    # ============================================================
+                    if api_mode == 0:
+                        url = "https://api.dexscreener.com/token-profiles/latest/v1"
+                        
+                        if DEBUG_HTTP_REQUESTS:
+                            logger.info(f"🌐 HTTP Request #{request_count}: Token Profiles API")
+                        
+                        self.stats['api_profiles_calls'] += 1
+                        
+                        async with session.get(url) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                
+                                # Token Profiles haben unterschiedliche Struktur
+                                profiles = data if isinstance(data, list) else []
+                                
+                                if DEBUG_HTTP_REQUESTS:
+                                    logger.info(f"   └─ Status 200: {len(profiles)} Token Profiles gefunden")
+                                
+                                new_pairs_count = 0
+                                
+                                for profile in profiles[:50]:  # Max 30
+                                    # Extract chain ID and address
+                                    chain_id = profile.get('chainId', '')
+                                    token_address = profile.get('tokenAddress', '')
+                                    
+                                    if chain_id != 'solana':
                                         continue
-                                    self._seen_pairs.add(pair_address)
-
-                                created_at = pair.get('pairCreatedAt', 0)
-                                if created_at:
-                                    age_minutes = (time.time() * 1000 - created_at) / 60000
-
-                                    # Relaxed Age Filter
-                                    if age_minutes < 50000:
-                                        new_pairs_count += 1
-                                        self.stats['pairs_found'] += 1
-
+                                    
+                                    if not token_address or token_address in seen_pairs:
+                                        continue
+                                    
+                                    # Konvertiere zu Pair-Format
+                                    pair_data = {
+                                        'chainId': 'solana',
+                                        'pairAddress': token_address,  # Nutze Token als Pair
+                                        'baseToken': {
+                                            'symbol': profile.get('symbol', 'UNKNOWN'),
+                                            'address': token_address
+                                        },
+                                        'pairCreatedAt': int(time.time() * 1000),  # Jetzt
+                                        'liquidity': {'usd': 0},
+                                        'priceUsd': profile.get('price', 0),
+                                        'from_profiles_api': True
+                                    }
+                                    
+                                    seen_pairs.add(token_address)
+                                    new_pairs_count += 1
+                                    self.stats['pairs_found'] += 1
+                                    
+                                    symbol = profile.get('symbol', 'UNKNOWN')
+                                    logger.info(
+                                        f"✨ TOKEN PROFILE: Brandneues Token gefunden: {symbol} "
+                                        f"({token_address[:8]}...)"
+                                    )
+                                    
+                                    await self._handle_new_pair(pair_data)
+                                
+                                if DEBUG_HTTP_REQUESTS and new_pairs_count > 0:
+                                    logger.info(f"   ✅ {new_pairs_count} neue Token Profiles verarbeitet")
+                            
+                            elif response.status == 429:
+                                logger.warning("⚠️ Rate Limit - warte 60s")
+                                await asyncio.sleep(60)
+                                continue
+                    
+                    # ============================================================
+                    # API 2: SOLANA PAIRS (Frische Pairs)
+                    # ============================================================
+                    elif api_mode == 1:
+                        url = "https://api.dexscreener.com/latest/dex/pairs/solana"
+                        
+                        if DEBUG_HTTP_REQUESTS:
+                            logger.info(f"🌐 HTTP Request #{request_count}: Solana Pairs API")
+                        
+                        self.stats['api_pairs_calls'] += 1
+                        
+                        async with session.get(url) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                pairs = data.get('pairs', [])
+                                
+                                # ✅ Sortiere nach Alter (neueste zuerst)
+                                pairs.sort(key=lambda p: p.get('pairCreatedAt', 0), reverse=True)
+                                
+                                if DEBUG_HTTP_REQUESTS:
+                                    logger.info(f"   └─ Status 200: {len(pairs)} Solana Pairs gefunden")
+                                
+                                new_pairs_count = 0
+                                checked_pairs = 0
+                                
+                                # Nimm die 50 neuesten
+                                for pair in pairs[:50]:
+                                    pair_address = pair.get('pairAddress')
+                                    if not pair_address or pair_address in seen_pairs:
+                                        continue
+                                    
+                                    checked_pairs += 1
+                                    
+                                    created_at = pair.get('pairCreatedAt', 0)
+                                    if created_at:
+                                        age_minutes = (time.time() * 1000 - created_at) / 60000
+                                        
                                         symbol = pair.get('baseToken', {}).get('symbol', 'UNKNOWN')
                                         liquidity = pair.get('liquidity', {}).get('usd', 0)
-
-                                        logger.info(
-                                            f"✨ SEARCH: {symbol} "
-                                            f"(Alter: {age_minutes:.1f}min, Liq: ${liquidity:,.0f})"
-                                        )
-
-                                        await self._handle_new_pair(pair)
-
-                            if new_pairs_count > 0:
-                                logger.info(f"   ✅ {new_pairs_count} neue Pairs (Query: '{current_query}')")
-
-                        elif response.status == 429:
-                            logger.warning("⚠️ Rate Limit - warte 60s")
-                            await asyncio.sleep(60)
-                            continue
-
+                                        
+                                        # ✅ VERBOSE LOGGING (erste 5)
+                                        if DEBUG_HTTP_REQUESTS and checked_pairs <= 5:
+                                            logger.info(
+                                                f"   📊 Pair: {symbol} | "
+                                                f"Alter: {age_minutes:.1f}min | "
+                                                f"Liq: ${liquidity:,.0f}"
+                                            )
+                                        
+                                        # ✅ RELAXED Age Filter (50000 min = ~35 Tage)
+                                        if age_minutes < 50000:  # Akzeptiert fast alles
+                                            seen_pairs.add(pair_address)
+                                            new_pairs_count += 1
+                                            self.stats['pairs_found'] += 1
+                                            
+                                            logger.info(
+                                                f"✨ PAIRS API: Neues Pair gefunden: {symbol} "
+                                                f"(Alter: {age_minutes:.1f}min, Liq: ${liquidity:,.0f})"
+                                            )
+                                            
+                                            await self._handle_new_pair(pair)
+                                
+                                if DEBUG_HTTP_REQUESTS:
+                                    logger.info(
+                                        f"   └─ Geprüft: {checked_pairs} Pairs | "
+                                        f"Neu: {new_pairs_count}"
+                                    )
+                            
+                            elif response.status == 429:
+                                logger.warning("⚠️ Rate Limit - warte 60s")
+                                await asyncio.sleep(60)
+                                continue
+                    
+                    # ============================================================
+                    # API 3: SEARCH (Spezifische Queries)
+                    # ============================================================
+                    else:
+                        current_query = search_queries[query_index % len(search_queries)]
+                        query_index += 1
+                        
+                        url = "https://api.dexscreener.com/latest/dex/search"
+                        params = {'q': current_query}
+                        
+                        if DEBUG_HTTP_REQUESTS:
+                            logger.info(f"🌐 HTTP Request #{request_count}: Searching '{current_query}'")
+                        
+                        self.stats['api_search_calls'] += 1
+                        
+                        async with session.get(url, params=params) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                pairs = data.get('pairs', [])
+                                
+                                if DEBUG_HTTP_REQUESTS:
+                                    logger.info(f"   └─ Status 200: {len(pairs)} Pairs gefunden")
+                                
+                                new_pairs_count = 0
+                                checked_pairs = 0
+                                
+                                for pair in pairs:
+                                    if pair.get('chainId') != 'solana':
+                                        continue
+                                    
+                                    checked_pairs += 1
+                                    
+                                    pair_address = pair.get('pairAddress')
+                                    if not pair_address or pair_address in seen_pairs:
+                                        continue
+                                    
+                                    created_at = pair.get('pairCreatedAt', 0)
+                                    if created_at:
+                                        age_minutes = (time.time() * 1000 - created_at) / 60000
+                                        
+                                        symbol = pair.get('baseToken', {}).get('symbol', 'UNKNOWN')
+                                        liquidity = pair.get('liquidity', {}).get('usd', 0)
+                                        
+                                        if DEBUG_HTTP_REQUESTS and checked_pairs <= 5:
+                                            logger.info(
+                                                f"   📊 Pair: {symbol} | "
+                                                f"Alter: {age_minutes:.1f}min | "
+                                                f"Liq: ${liquidity:,.0f}"
+                                            )
+                                        
+                                        # ✅ RELAXED Age Filter
+                                        if age_minutes < 50000:
+                                            seen_pairs.add(pair_address)
+                                            new_pairs_count += 1
+                                            self.stats['pairs_found'] += 1
+                                            
+                                            logger.info(
+                                                f"✨ SEARCH: Neues Pair gefunden: {symbol} "
+                                                f"(Alter: {age_minutes:.1f}min, Liq: ${liquidity:,.0f})"
+                                            )
+                                            
+                                            await self._handle_new_pair(pair)
+                                
+                                if DEBUG_HTTP_REQUESTS:
+                                    logger.info(
+                                        f"   └─ Geprüft: {checked_pairs} Solana Pairs | "
+                                        f"Neu: {new_pairs_count} | "
+                                        f"Query: '{current_query}'"
+                                    )
+                            
+                            elif response.status == 429:
+                                logger.warning("⚠️ Rate Limit - warte 60s")
+                                await asyncio.sleep(60)
+                                continue
+                    
+                    # Rotate API
+                    api_rotation_index += 1
+                    
+                    # ✅ Periodisches Status-Log (alle 60s)
+                    current_time = time.time()
+                    if current_time - last_log_time > 60:
+                        logger.info(
+                            f"📊 MULTI-API Scanner Status: "
+                            f"Requests={request_count}, "
+                            f"Pairs gefunden={self.stats['pairs_found']}, "
+                            f"Verarbeitet={self.stats['processed']}, "
+                            f"Profiles={self.stats['api_profiles_calls']}, "
+                            f"Pairs={self.stats['api_pairs_calls']}, "
+                            f"Search={self.stats['api_search_calls']}"
+                        )
+                        last_log_time = current_time
+                    
                     # Cleanup seen_pairs
-                    async with self._seen_pairs_lock:
-                        if len(self._seen_pairs) > 5000:
-                            pairs_list = list(self._seen_pairs)
-                            self._seen_pairs = set(pairs_list[-4000:])
-
-                    await asyncio.sleep(10)  # 10s Intervall
-
+                    if len(seen_pairs) > 5000:
+                        seen_pairs_list = list(seen_pairs)
+                        seen_pairs = set(seen_pairs_list[-4000:])
+                    
+                    # ✅ Warte zwischen Requests (10 Sekunden)
+                    await asyncio.sleep(2)
+                    
                 except asyncio.TimeoutError:
-                    logger.error("⏱️ Search Timeout")
-                    await asyncio.sleep(10)
+                    logger.error("⏱️ HTTP Request Timeout")
+                    await asyncio.sleep(30)
+                
                 except Exception as e:
-                    logger.error(f"❌ Search Error: {e}")
-                    await asyncio.sleep(10)
-
-        except Exception as e:
-            logger.error(f"❌ Search Fatal: {e}", exc_info=True)
+                    logger.error(f"❌ Multi-API Error: {e}", exc_info=True)
+                    await asyncio.sleep(30)
+        
         finally:
-            logger.info("🛑 Search Poller gestoppt")
+            await session.close()
+            logger.info("🛑 Multi-API Scanner gestoppt")
     
     async def _http_fallback_loop(self):
         """
