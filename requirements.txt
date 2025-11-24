@@ -13,7 +13,7 @@ base58==2.1.1
 
 # Data Processing
 pandas==2.2.3
-numpy==1.26.4
+numpy==2.3.5
 
 # Machine Learning & AI
 scikit-learn==1.5.2
