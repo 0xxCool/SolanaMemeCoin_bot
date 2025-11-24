@@ -51,23 +51,27 @@ DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/{}"
 # ==============================================================================
 @dataclass
 class ScannerFilters:
-    # Stufe 1: Basis-Filter (sehr schnell)
-    MIN_LIQUIDITY_USD: float = 5000
-    MAX_LIQUIDITY_USD: float = 500000  # Zu hohe Liquidität = weniger Gewinnpotential
-    MIN_AGE_MINUTES: float = 0.5  # Mindestens 30 Sekunden alt
-    MAX_AGE_MINUTES: float = 10   # Maximal 10 Minuten alt
+    # VORHER → NACHHER
     
-    # Stufe 2: Token-Metriken
-    MIN_HOLDER_COUNT: int = 50
-    MAX_HOLDER_COUNT: int = 5000  # Zu viele Holder = bereits zu spät
-    MAX_TOP_10_PERCENTAGE: float = 30  # Max 30% bei Top 10 Holdern
-    MIN_LP_PERCENTAGE: float = 90  # Mindestens 90% der Liquidität im LP
+    # Liquidität - OK, nur leicht anpassen
+    MIN_LIQUIDITY_USD: float = 2000        # war: 5000
+    MAX_LIQUIDITY_USD: float = 1000000     # war: 500000
     
-    # Stufe 3: Erweiterte Analyse
-    MIN_VOLUME_USD: float = 10000  # Mindestvolumen in 5 Minuten
-    MIN_TXS_COUNT: int = 20  # Mindestens 20 Transaktionen
-    MAX_PRICE_IMPACT_PERCENT: float = 2  # Max 2% Price Impact für unseren Trade
-    MIN_SCORE: float = 70  # Minimum Score aus allen Metriken
+    # Alter - KRITISCHE ÄNDERUNG
+    MIN_AGE_MINUTES: float = 0.1           # war: 0.5
+    MAX_AGE_MINUTES: float = 360           # war: 10 ← HAUPTPROBLEM!
+    
+    # Holder - Relaxieren
+    MIN_HOLDER_COUNT: int = 5             # war: 50
+    MAX_HOLDER_COUNT: int = 10000          # war: 5000
+    MAX_TOP_10_PERCENTAGE: float = 40      # war: 30
+    MIN_LP_PERCENTAGE: float = 80          # war: 90
+    
+    # Volume - Stark relaxieren
+    MIN_VOLUME_USD: float = 500           # war: 10000 ← KRITISCH!
+    MIN_TXS_COUNT: int = 5                 # war: 20
+    MAX_PRICE_IMPACT_PERCENT: float = 3    # war: 2
+    MIN_SCORE: float = 40                  # war: 70
 
 # ==============================================================================
 # TRADING PARAMETER
