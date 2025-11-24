@@ -29,7 +29,7 @@ keras==3.7.0
 
 # Database (für Trade History)
 aiosqlite==0.20.0
-sqlalchemy==2.0.36
+sqlalchemy==2.0.44
 
 # Monitoring & Logging
 prometheus-client==0.21.1
