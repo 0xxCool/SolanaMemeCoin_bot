@@ -22,7 +22,7 @@ joblib==1.4.2
 aiofiles==24.1.0
 
 # Database (für Trade History)
-aiosqlite==0.20.0
+aiosqlite==0.21.0
 sqlalchemy==2.0.36
 
 # Monitoring & Logging
