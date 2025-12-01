@@ -24,7 +24,7 @@ websockets==12.0
 python-multipart==0.0.6
 
 # Windows specific
-pywin32==306  # Windows integration
+pywin32==311  # Windows integration
 pyinstaller==6.3.0  # For creating .exe
 
 # Database (for local caching)
