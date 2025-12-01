@@ -28,7 +28,7 @@ prometheus-client==0.21.1
 colorlog==6.9.0
 
 # Performance
-uvloop==0.21.0
+uvloop==0.22.1
 orjson==3.10.12
 
 # Testing

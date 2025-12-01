@@ -30,7 +30,7 @@ prometheus-client==0.21.1
 colorlog==6.9.0
 
 # Performance
-uvloop==0.21.0  # Schnellerer Event Loop (Linux/Mac)
+uvloop==0.22.1  # Schnellerer Event Loop (Linux/Mac)
 orjson==3.10.12  # Schnelleres JSON
 
 # Testing
