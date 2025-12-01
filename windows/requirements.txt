@@ -18,7 +18,7 @@ PyQt6-sip==13.6.0
 qasync==0.27.1  # Async support for PyQt
 
 # API Server
-fastapi==0.108.0
+fastapi==0.123.0
 uvicorn[standard]==0.25.0
 websockets==12.0
 python-multipart==0.0.6
